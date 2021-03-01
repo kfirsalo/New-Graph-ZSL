@@ -1,3 +1,21 @@
+# Code
+.idea/
+data_set/
+awa2/
+dblp/
+douban/
+imdb/
+materials/
+models/
+our_imdb/
+pkl/
+pkl_e2v/
+save_awa2/
+StaticGraphEmbeddings/
+yelp/
+ZSL _DataSets/
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

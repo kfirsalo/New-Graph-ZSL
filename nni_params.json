@@ -1,0 +1,6 @@
+{
+    "weights_movie_movie": {"_type": "uniform", "_value": [0, 100]},
+    "weights_movie_class": {"_type": "uniform", "_value": [0, 100]},
+    "embedding_type": {"_type": "choice", "_value": ["Node2Vec",  "Oger"]},
+    "embedding_dimensions": {"_type": "choice", "_value": [16, 32, 64, 128, 256]}
+}

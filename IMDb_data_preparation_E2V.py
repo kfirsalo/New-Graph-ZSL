@@ -288,33 +288,33 @@ class MoviesGraph(DataCsvToGraph):
         :param final_labels_data:
         :return: knowledge_graph
         """
-        if os.path.exists('pkl_e2v/IMDb_knowledge_graph.gpickle') and os.path.exists('pkl_e2v/IMDb_knowledge_data.pkl'):
-            knowledge_graph = nx.read_gpickle('pkl_e2v/IMDb_knowledge_graph.gpickle')
-            knowledge_data = pd.read_pickle('pkl_e2v/IMDb_knowledge_data.pkl')
-        else:
-            clean_column = ['genre', 'imdb_title_id']
-            final_labels_data = self.drop_columns(final_labels_data, clean_column)
-            final_labels_data = final_labels_data.drop_duplicates('name_label')
-            final_labels_data = final_labels_data.reset_index(drop=True)
-            nodes = final_labels_data['name_label']
-            # knowledge_data = nodes
-            # knowledge_data['name_label2'] = np.zeros(len(knowledge_data['name_label']))
-            # knowledge_data.append()
-            knowledge_data = pd.DataFrame(columns=['node1', 'node2', 'weight'])
-            knowledge_graph = nx.Graph()
-            knowledge_graph.add_nodes_from(nodes)
-            for i in range(len(nodes)):
-                for j in range(len(nodes)):
-                    if i != j:
-                        compare_label_i = np.array(final_labels_data['array_label'][i].split(",")).astype(int)
-                        compare_label_j = np.array(final_labels_data['array_label'][j].split(",")).astype(int)
-                        jaccard_similarity = self.compute_jaccard_similarity_score(compare_label_i, compare_label_j)
-                        if jaccard_similarity > threshold:
-                            edge = [(nodes[i], nodes[j], jaccard_similarity)]
-                            knowledge_graph.add_weighted_edges_from(edge)
-                            knowledge_data.loc[len(knowledge_data)] = [nodes[i], nodes[j], jaccard_similarity]
-            nx.write_gpickle(knowledge_graph, 'pkl_e2v/IMDb_knowledge_graph.gpickle')
-            pd.to_pickle(knowledge_data, 'pkl_e2v/IMDb_knowledge_data.pkl')
+        # if os.path.exists('pkl_e2v/IMDb_knowledge_graph.gpickle') and os.path.exists('pkl_e2v/IMDb_knowledge_data.pkl'):
+        #     knowledge_graph = nx.read_gpickle('pkl_e2v/IMDb_knowledge_graph.gpickle')
+        #     knowledge_data = pd.read_pickle('pkl_e2v/IMDb_knowledge_data.pkl')
+        # else:
+        clean_column = ['genre', 'imdb_title_id']
+        final_labels_data = self.drop_columns(final_labels_data, clean_column)
+        final_labels_data = final_labels_data.drop_duplicates('name_label')
+        final_labels_data = final_labels_data.reset_index(drop=True)
+        nodes = final_labels_data['name_label']
+        # knowledge_data = nodes
+        # knowledge_data['name_label2'] = np.zeros(len(knowledge_data['name_label']))
+        # knowledge_data.append()
+        knowledge_data = pd.DataFrame(columns=['node1', 'node2', 'weight'])
+        knowledge_graph = nx.Graph()
+        knowledge_graph.add_nodes_from(nodes)
+        for i in range(len(nodes)):
+            for j in range(len(nodes)):
+                if i != j:
+                    compare_label_i = np.array(final_labels_data['array_label'][i].split(",")).astype(int)
+                    compare_label_j = np.array(final_labels_data['array_label'][j].split(",")).astype(int)
+                    jaccard_similarity = self.compute_jaccard_similarity_score(compare_label_i, compare_label_j)
+                    if jaccard_similarity > threshold:
+                        edge = [(nodes[i], nodes[j], jaccard_similarity)]
+                        knowledge_graph.add_weighted_edges_from(edge)
+                        knowledge_data.loc[len(knowledge_data)] = [nodes[i], nodes[j], jaccard_similarity]
+        # nx.write_gpickle(knowledge_graph, 'pkl_e2v/IMDb_knowledge_graph.gpickle')
+        # pd.to_pickle(knowledge_data, 'pkl_e2v/IMDb_knowledge_data.pkl')
         return knowledge_graph, knowledge_data
 
     def create_labels_graph(self, final_labels_data):

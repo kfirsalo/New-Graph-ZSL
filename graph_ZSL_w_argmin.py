@@ -1,3 +1,7 @@
+import json
+import multiprocessing
+from datetime import datetime
+
 from node2vec import Node2Vec
 import pandas as pd
 import numpy as np
@@ -17,10 +21,24 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from itertools import chain
 from utils import set_gpu
-from utlis_graph_zsl import hist_plot, plot_confusion_matrix, plots_2measures_vs_parameter
+from utlis_graph_zsl import hist_plot, plot_confusion_matrix, plots_2measures_vs_parameter, grid
+from IMDb_data_preparation_E2V import MoviesGraph
 
 random.seed(0)
 np.random.seed(0)
+
+HEADER = ['movie_weights',
+          'labels_weights',
+          'embedding_type',
+          'embedding_dimension',
+          'norma_type',
+          'class_edges_threshold',
+          'seen_percentage',
+          'data_name',
+          'awa2_attributes_weight',
+          'acc',
+          'seen_acc',
+          'unseen_acc']
 
 
 class GraphImporter:
@@ -39,7 +57,6 @@ class GraphImporter:
         :param weights:
         :return:
         """
-        from IMDb_data_preparation_E2V import MoviesGraph
         weights_dict = {'movies_edges': weights[0], 'labels_edges': weights[1]}
         dict_paths = {'cast': 'data_set/IMDb title_principals.csv', 'genre': 'data_set/IMDb movies.csv'}
         imdb = MoviesGraph(dict_paths, self.args.graph_percentage)
@@ -50,7 +67,6 @@ class GraphImporter:
         return multi_gnx
 
     def import_imdb_weighted_graph(self, weights):
-        from IMDb_data_preparation_E2V import MoviesGraph
         weights_dict = {'movies_edges': weights[0], 'labels_edges': weights[1]}
         dict_paths = {'cast': 'data_set/IMDb title_principals.csv', 'genre': 'data_set/IMDb movies.csv'}
         imdb = MoviesGraph(dict_paths, self.args.graph_percentage)
@@ -155,7 +171,7 @@ class EmbeddingCreator(object):
         from StaticGraphEmbeddings.our_embeddings_methods.static_embeddings import StaticEmbeddings
         if user_initial_nodes_choice is not None:
             static_embeddings = StaticEmbeddings(self.data_name, self.graph, initial_size=100, initial_method="node2vec", method="OGRE", H=user_initial_nodes_choice,
-                 dim=self.dim, choose="degrees", regu_val=0, weighted_reg=False, epsilon=0.1, file_tags=None)
+                                                 dim=self.dim, choose="degrees", regu_val=0, weighted_reg=False, epsilon=0.1, file_tags=None)
         else:
             static_embeddings = StaticEmbeddings(self.data_name, self.graph, dim=self.dim)
         dict_embeddings = static_embeddings.dict_embedding
@@ -169,7 +185,7 @@ class EdgesPreparation:
         self.split = split
         self.graph = graph
         self.label_edges = self.make_label_edges()
-        self.unseen_edges, self.test_edges, self.dict_test_edges, self.dict_train_edges, self.dict_unseen_edges\
+        self.unseen_edges, self.test_edges, self.dict_test_edges, self.dict_train_edges, self.dict_unseen_edges \
             = self.train_test_unseen_split()
 
     def make_label_edges(self):
@@ -372,7 +388,7 @@ class Classifier:
     def calculate_by_single_norm(self, true_edges, false_edges):
         x_true, x_false = np.zeros(shape=(len(true_edges), 1)), np.zeros(shape=(len(false_edges), 1))
         y_true_edge, y_false_edge = np.zeros(shape=(len(true_edges), 4)).astype(int), \
-            np.zeros(shape=(len(false_edges), 4)).astype(int)
+                                    np.zeros(shape=(len(false_edges), 4)).astype(int)
         for i, edge in enumerate(true_edges):
             norm = self.edge_distance(edge)
             x_true[i, 0] = norm
@@ -394,8 +410,8 @@ class Classifier:
         :param ratio: determine the train size.
         :return: THe split data
         """
-        x_train, y_train = np.concatenate((x_true, x_false), axis=0),\
-                                np.concatenate((y_true_edge, y_false_edge), axis=0)
+        x_train, y_train = np.concatenate((x_true, x_false), axis=0), \
+                           np.concatenate((y_true_edge, y_false_edge), axis=0)
         # y_train = np.array([y_train_edge.T[0].reshape(-1, 1), y_train_edge.T[1].reshape(-1, 1)]).T.reshape(-1,
         #                                                                                                    2).astype(
         #     int)
@@ -615,29 +631,35 @@ class Classifier:
         plot_confusion_matrix(conf_matrix, title, x_title, y_title)
         plt.savefig(f'{self.args.data_name}/plots/confusion_matrix_{self.embedding}_{self.args.norm}'
                     f'_{int(100 * self.args.seen_percentage)}_seen_percent')
+from dataclasses import dataclass
+@dataclass
+class InventoryItem:
+    """Class for keeping track of an item in inventory."""
+    data_name: str
+    threshold: float
+    norm: str
+    embedding: str
+    false_per_true: str
+    norm: str
 
 
 def define_args(params):
-    dict_param = {"weights_movie_movie": params[0], "weights_movie_class": params[1],
-                  "embedding_type": params[2], "embedding_dimension": params[3], "norma_type": params[4],
-                  'threshold': params[5], 'seen percentage': params[6],
-                  "data": params[7], "awa2_attributes_weight": params[8]}
-    print(dict_param)
-    weights = params[0:2].astype(float)
+    print(params)
+    weights = np.array([params['weights_movie_movie'], params['weights_movie_class']]).astype(float)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_name', default=param[7])  # our_imdb, awa2
-    parser.add_argument('--threshold', default=params[5])
-    parser.add_argument('--norm', default=params[4])  # cosine / L2 Norm / L1 Norm
-    parser.add_argument('--embedding', default=params[2])  # Node2Vec / Event2Vec / OGRE
+    parser.add_argument('--data_name', default=params['data_name'])  # our_imdb, awa2
+    parser.add_argument('--threshold', default=params['threshold'])
+    parser.add_argument('--norm', default=params['norma_types'])  # cosine / L2 Norm / L1 Norm
+    parser.add_argument('--embedding', default=params['embedding_type'])  # Node2Vec / Event2Vec / OGRE
     # embedding = params[2]
     parser.add_argument('--false_per_true', default=10)
     parser.add_argument('--ratio', default=[0.8])
-    parser.add_argument('--seen_percentage', default=params[6].astype(float))
-    parser.add_argument('--embedding_dimension', default=params[3].astype(int))
+    parser.add_argument('--seen_percentage', default=float(params['seen_percentage']))
+    parser.add_argument('--embedding_dimension', default=int(params['embedding_dimensions']))
     parser.add_argument('--unseen_weight_advantage', default=0.9)
     parser.add_argument('--graph_percentage', default=1)
-    if param[7] == 'awa2':
-        parser.add_argument('--awa2_attributes_weight', default=params[8])
+    if params['data_name'] == 'awa2':
+        parser.add_argument('--awa2_attributes_weight', default=params['awa2_attributes_weight'])
         import torch
         cuda = torch.cuda.is_available()
         parser.add_argument('--cnn', default='materials/resnet50-base.pth')
@@ -667,7 +689,7 @@ def obj_func_grid(params, specific_split=True, split=None):  # split False or Tr
     if args.data_name == 'our_imdb':
         weighted_graph = graph_maker.import_imdb_weighted_graph(weights)
     elif args.data_name == 'awa2':
-        awa2_att_weight = params[1]
+        awa2_att_weight = params['awa2_attributes_weight']
         weighted_graph, split = graph_maker.import_awa2_graph(weights, specific_split, awa2_att_weight)
     else:
         raise ValueError(f"Wrong name of DataSet, {args.data_name}")
@@ -695,66 +717,112 @@ def obj_func_grid(params, specific_split=True, split=None):  # split False or Tr
     # classifier.hist_plot_for_unseen_dist_eval(hist_real_unseen_pred)
     accuracy, seen_accuracy, unseen_accuracy, conf_matrix = classifier.confusion_matrix_maker(
         dict_class_measures_node2vec, pred, pred_true)
-    classifier.plot_confusion_matrix_all_classes(conf_matrix)
-    try:
-        values = pd.read_csv(os.path.join(args.data_name, "train", 'grid_search.csv'))
-        df1 = pd.DataFrame(np.column_stack((params.reshape(1, 9),
-                                            np.array([accuracy, seen_accuracy, unseen_accuracy]).reshape(1, 3))),
-                           columns=['movie_weights', 'labels_weights', 'embedding_type',
-                                    'embedding_dimension', 'norma_type', 'class_edges_threshold', 'seen_percentage',
-                                    'data_name', 'awa2_attributes_weight'
-                                    'acc', 'seen_acc', 'unseen_acc'])
-        frames1 = [values, df1]
-        values = pd.concat(frames1, axis=0, names=['class_edges_threshold', 'movie_weights', 'labels_weights',
-                                                   'embedding_type',
-                                                   'embedding_dimension', 'norma_type', 'data_name',
-                                                   'awa2_attributes_weight', 'acc', 'seen_acc',
-                                                   'unseen_acc'], sort=False)
-    except:
-        values = pd.DataFrame(np.column_stack((params.reshape(1, 9),
-                                            np.array([accuracy, seen_accuracy, unseen_accuracy]).reshape(1, 3))),
-                              columns=['movie_weights', 'labels_weights', 'embedding_type',
-                                       'embedding_dimension', 'norma_type', 'class_edges_threshold', 'seen_percentage',
-                                       'data_name', 'awa2_attributes_weight',
-                                       'acc', 'seen_acc', 'unseen_acc'])
-    values.to_csv(os.path.join(args.data_name, "train", 'grid_search.csv'), index=None)
+    # classifier.plot_confusion_matrix_all_classes(conf_matrix)
     return accuracy, seen_accuracy, unseen_accuracy
 
 
-if __name__ == '__main__':
+def flatten_dict(d):
+    def items():
+        for key, value in d.items():
+            if isinstance(value, dict):
+                for subkey, subvalue in flatten_dict(value).items():
+                    yield key + "." + subkey, subvalue
+            else:
+                yield key, value
+    return dict(items())
+
+
+def config_to_str(config):
+    config = flatten_dict(config)
+    return [str(config.get(k, "--")) for k in HEADER]
+
+
+def run_grid(grid_params, res_dir, now):
+    grid_params = grid_params if type(grid_params) is dict else json.load(open(grid_params, "rt"))
+    res_filename = os.path.join(res_dir, f"{grid_params['data_name'][0]}_grid_{now}.csv")
+    out = open(res_filename, "wt")
+    out.write(f"{','.join(HEADER)}\n")
+    out.close()
+    for config in grid(grid_params):
+        param = {p: config[i] for i, p in enumerate(list(grid_params.keys()))}
+        acc, seen_acc, unseen_acc = obj_func_grid(param)
+        table_row = config_to_str(param)
+        out = open(res_filename, "wt")
+        table_row[HEADER.index('acc')] = str(acc)
+        table_row[HEADER.index('seen_acc')] = str(seen_acc)
+        table_row[HEADER.index('unseen_acc')] = str(unseen_acc)
+        out.write(f"{','.join(table_row)}\n")
+        out.close()
+
+
+def main():
     seen_accuracies, unseen_accuracies = [], []
     parameters = {
         "data_name": ['our_imdb'],  # 'awa2', 'our_imdb'
-        "threshold": [0.3],
-        "weights_movie_movie": [1],
-        "weights_movie_class": [1],
-        # "weights_movie_movie": np.logspace(-2, 4, 7),
-        # "weights_movie_class": np.logspace(-2, 4, 7),
         "embedding_type": ["Node2Vec"],
-        "embedding_dimensions": [128],
+        "embedding_dimensions": [32, 64, 128, 256],
+        # "weights_movie_class": [1],
+        # "weights_movie_movie": [1],
+        "weights_movie_class": np.logspace(-2, 3, 6),
+        "weights_movie_movie": np.logspace(-2, 3, 6),
         "norma_types": ['cosine'],
-        # "seen_percentage": np.linspace(0.1, 0.9, 9)
+        "threshold": [0.3, 0.6, 0.9],
         "seen_percentage": [0.8],
-        "awa2_attribures_weight": [100]  # 100 is the best for now
+        # "seen_percentage": np.linspace(0.1, 0.9, 9)
+        "awa2_attributes_weight": [100]  # 100 is the best for now
     }
     num = 0
-    for data in parameters["data_name"]:
-        for e_type in parameters["embedding_type"]:
-            for dim in parameters["embedding_dimensions"]:
-                for w_m_c in parameters["weights_movie_class"]:
-                    for w_m_m in parameters["weights_movie_movie"]:
-                        for norma_type in parameters["norma_types"]:
-                            for threshold in parameters["threshold"]:
-                                for per in parameters["seen_percentage"]:
-                                    for w_att in parameters["awa2_attribures_weight"]:
-                                        param = np.array([w_m_m, w_m_c, e_type, dim, norma_type, threshold, per, data, w_att])
-                                        print(f'iteration number {num}')
-                                        num += 1
-                                        acc, seen_acc, unseen_acc = obj_func_grid(param)
-                                        seen_accuracies.append(seen_acc*100)
-                                        unseen_accuracies.append(unseen_acc*100)
-                                        # print("all accuracy: ", acc)
+    for param in grid(parameters):
+        dict_param = {p: param[i] for i, p in enumerate(list(parameters.keys()))}
+        # param = np.array([w_m_m, w_m_c, e_type, dim, norma_type, threshold, per, data, w_att])
+        print(f'iteration number {num}')
+        num += 1
+        acc, seen_acc, unseen_acc = obj_func_grid(dict_param)
+        seen_accuracies.append(seen_acc*100)
+        unseen_accuracies.append(unseen_acc*100)
+        # print("all accuracy: ", acc)
     dict_measures = {"unseen_accuracy": unseen_accuracies, "seen_accuracy": seen_accuracies}
     plots_2measures_vs_parameter(dict_measures, parameters["seen_percentage"], 'seen Percentage', 'our_imdb',
                                  'Zero Shot Learning', "Accuracy", parameters["norma_types"][0],
                                  parameters["embedding_type"][0])
+
+
+def ab(a, b):
+    print(b)
+    b += 1
+    return b
+
+
+if __name__ == '__main__':
+    res_dir = "C:\\Users\\kfirs\\lab\\Zero Shot Learning\\New-Graph-ZSL\\grid_results"
+    # now = datetime.now().strftime("%d%m%y_%H%M%S")
+    now = "01_03_21"
+    parameters = {
+        "data_name": ['our_imdb'],  # 'awa2', 'our_imdb'
+        "embedding_type": ["Node2Vec"],
+        "embedding_dimensions": [32, 64, 128, 256],
+        # "weights_movie_class": [1],
+        # "weights_movie_movie": [1],
+        "weights_movie_class": np.logspace(-2, 3, 6),
+        "weights_movie_movie": np.logspace(-2, 3, 6),
+        "norma_types": ['cosine'],
+        "threshold": [0.3, 0.6, 0.9],
+        "seen_percentage": [0.8],
+        # "seen_percentage": np.linspace(0.1, 0.9, 9)
+        "awa2_attributes_weight": [100]  # 100 is the best for now
+    }
+    processes = []
+    parameters_by_procesess = []
+    for w_m_m in parameters["weights_movie_movie"]:
+        for w_m_c in parameters["weights_movie_class"]:
+            param_by_parameters = parameters.copy()
+            param_by_parameters["weights_movie_movie"] = [w_m_m]
+            param_by_parameters["weights_movie_class"] = [w_m_c]
+            parameters_by_procesess.append(param_by_parameters)
+    for i in range(len(parameters_by_procesess)):
+        proc = multiprocessing.Process(target=run_grid, args=(parameters_by_procesess[i], res_dir, now, ))
+        processes.append(proc)
+        proc.start()
+    for p in processes:
+        p.join()
+

@@ -10,10 +10,18 @@ import random
 import seaborn as sns
 from itertools import chain
 from itertools import product
+from dataclasses import dataclass
 
 random.seed(0)
 np.random.seed(0)
 
+
+
+@dataclass
+class C:
+    a: float
+    b: float
+    c: float
 
 def grid(dict_params):
     """ transforming continues space into discrete space by splitting every axis and then take the

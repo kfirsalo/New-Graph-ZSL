@@ -1,0 +1,12 @@
+
+{
+  "data_name": ["our_imdb"],
+  "embedding_type": ["Node2Vec"],
+  "embedding_dimensions": [32, 64, 128, 256],
+  "weights_movie_class": [0.01, 0.1, 1, 10, 100],
+  "weights_movie_movie": [0.01, 0.1, 1, 10, 100],
+  "norma_types": ["cosine"],
+  "threshold": [0.3, 0.6, 0.9],
+  "seen_percentage": [0.8],
+  "awa2_attributes_weight": [100]
+}

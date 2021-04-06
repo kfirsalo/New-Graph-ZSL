@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader
 from models.resnet import make_resnet50_base
 
 import sys
+
 sys.path.insert(1, "./ZSL _DataSets")
 from image_folder import ImageFolder
 from utils import set_gpu, pick_vectors
@@ -45,8 +46,10 @@ class ImagesEmbeddings:
         train_names = awa2_split['train_names']
         test_names = awa2_split['test_names']
         seen_classes, unseen_classes = self.classes()
-        dict_name_class = {name: c for name, c in zip(chain(train_names, test_names), chain(seen_classes, unseen_classes))}
-        dict_class_name = {c: name for name, c in zip(chain(train_names, test_names), chain(seen_classes, unseen_classes))}
+        dict_name_class = {name: c for name, c in
+                           zip(chain(train_names, test_names), chain(seen_classes, unseen_classes))}
+        dict_class_name = {c: name for name, c in
+                           zip(chain(train_names, test_names), chain(seen_classes, unseen_classes))}
         return dict_name_class, dict_class_name
 
     def cnn_maker(self):
@@ -67,7 +70,7 @@ class ImagesEmbeddings:
                 data = data.cuda()
             with torch.no_grad():
                 embeds = self.cnn(data)
-            embed_matrix[c:c+loader.batch_size, :] = embeds # (batch_size, d)
+            embed_matrix[c:c + loader.batch_size, :] = embeds  # (batch_size, d)
             count += loader.batch_size
             c += loader.batch_size
         return embed_matrix, count
@@ -81,7 +84,8 @@ class ImagesEmbeddings:
             dict_image_embed = np.load(self.dict_image_embed_path, allow_pickle=True).item()
         else:
             count = 0
-            for i, name in enumerate(chain(self.dict_class_name[self.unseen_classes], self.dict_class_name[self.seen_classes])):
+            for i, name in enumerate(
+                    chain(self.dict_class_name[self.unseen_classes], self.dict_class_name[self.seen_classes])):
                 dataset = ImageFolder(osp.join(self.awa2_path, 'JPEGImages'), [name], f'{action}')
                 embed_matrix = torch.tensor(np.zeros((len(dataset), 2048)))
                 classes = np.concatenate((classes, np.repeat(name, len(dataset))))
@@ -130,7 +134,7 @@ class Awa2GraphCreator:
             # image_graph.add_nodes_from(np.arange(len(self.embeddings)))
             count = 0
             for i in range(len(self.embeddings)):
-                neighbors, distances = kdt.query_radius(self.embeddings[i:i+1], r=self.args.images_threshold,
+                neighbors, distances = kdt.query_radius(self.embeddings[i:i + 1], r=self.args.images_threshold,
                                                         return_distance=True)
                 if len(neighbors[0]) == 1:
                     distances, neighbors = kdt.query(self.embeddings[i:i + 1], k=2,
@@ -142,10 +146,10 @@ class Awa2GraphCreator:
                 neighbors = np.delete(neighbors, loop_ind)
                 distances = np.delete(distances, loop_ind)
                 # make distance into weights and fix zero distances
-                edges_weights = [1/dist if dist > 0 else 1000 for dist in distances]
+                edges_weights = [1 / dist if dist > 0 else 1000 for dist in distances]
                 len_neigh = len(neighbors)
                 count += len_neigh
-                mean = count/(i+1)
+                mean = count / (i + 1)
                 if i % 1000 == 0:
                     print('Progress:', i, '/', len(self.embeddings), ';  Current Mean:', mean)  # 37273
                 weight_edges = list(zip(np.repeat(i, len(neighbors)).astype(str), neighbors.astype(str), edges_weights))
@@ -158,12 +162,12 @@ class Awa2GraphCreator:
         edges = graph['edges']
         nodes = graph['wnids']
         # dict_nodes_translation = {i: node for i, node in enumerate(nodes)}
-        dict_class_nodes_translation = {node: 'c'+str(i) for i, node in enumerate(nodes)}
+        dict_class_nodes_translation = {node: 'c' + str(i) for i, node in enumerate(nodes)}
         dict_nodes_class_translation = {'c' + str(i): node for i, node in enumerate(nodes)}
         dict_class_nodes_translation = {**dict_class_nodes_translation, **dict_nodes_class_translation}
         # edges = [(dict_nodes_translation[x[0]],
         #           dict_nodes_translation[x[1]]) for x in edges]
-        edges = [('c'+str(x[0]), 'c'+str(x[1])) for x in edges]
+        edges = [('c' + str(x[0]), 'c' + str(x[1])) for x in edges]
         kg_imagenet = nx.Graph()
         kg_imagenet.add_edges_from(edges)
         return kg_imagenet, dict_class_nodes_translation
@@ -210,7 +214,7 @@ class Awa2GraphCreator:
             neighbors_translation = [dict_class_nodes_translation[kd_idx_to_class_idx[neighbor]] for neighbor in
                                      neighbors]
             weight_edges = list(zip(np.repeat(dict_class_nodes_translation[kd_idx_to_class_idx[i]], len(neighbors)),
-                    neighbors_translation, edges_weights))
+                                    neighbors_translation, edges_weights))
             kg_imagenet.add_weighted_edges_from(weight_edges)
             # TODO: add the weight from the attributes to the pre graph and not replace them
             #  (minor problem because it is sparse graph)
@@ -302,7 +306,7 @@ if __name__ == '__main__':
     dict_idx_image_class = {i: dict_name_class[dict_image_class[image]]
                             for i, image in enumerate(list(dict_image_class.keys()))}
     awa2_graph_creator = Awa2GraphCreator(embeds_matrix, dict_image_embed, dict_name_class, dict_idx_image_class,
-                                             args.images_nodes_percentage, args)
+                                          args.images_nodes_percentage, args)
     image_graph = awa2_graph_creator.create_image_graph()
     kg, dict_class_nodes_translation = awa2_graph_creator.imagenet_knowledge_graph()
     att_weight = 10

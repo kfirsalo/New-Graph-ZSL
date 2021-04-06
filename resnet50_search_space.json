@@ -1,0 +1,5 @@
+{
+  "batch_size":{"_type":"choice","_value":[16, 32, 64]},
+  "learning_rate":{"_type":"uniform","_value":[1e-6,1e-1]},
+  "weight_decay":{"_type":"uniform","_value":[0, 1e-1]}
+}

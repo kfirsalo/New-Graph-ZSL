@@ -1,0 +1,25 @@
+authorName: kfir
+experimentName: resnet50_nni
+trialConcurrency: 4
+maxExecDuration: 3d
+maxTrialNum: 500
+trainingServicePlatform: local
+# The path to Search Space
+searchSpacePath: resnet50_search_space.json
+useAnnotation: false
+tuner:
+  builtinTunerName: Anneal
+  classArgs:
+    optimize_mode: maximize
+  gpuIndices: 0,1,2,3
+# The path and the running command of trial
+
+
+trial:
+  command: python resnet50_runner.py --dataset cub
+  codeDir: .
+  gpuNum: 4
+localConfig:
+  maxTrialNumPerGpu: 4
+  useActiveGpu: true
+  gpuIndices: 0,1,2,3

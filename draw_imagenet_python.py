@@ -1,7 +1,7 @@
 import json
 import numpy as np
 from node2vec import Node2Vec
-from train_resnet_fit import Awa2GraphCreator
+from images_graph_creator import Awa2GraphCreator
 import matplotlib.pyplot as plt
 import networkx as nx
 import os.path as osp

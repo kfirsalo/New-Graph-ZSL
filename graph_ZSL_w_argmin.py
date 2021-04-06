@@ -93,7 +93,7 @@ class GraphImporter:
         return graph
 
     def import_awa2_graph(self, awa2_weights, specific_split, att_weight):
-        from train_resnet_fit import Awa2GraphCreator, ImagesEmbeddings
+        from images_graph_creator import Awa2GraphCreator, ImagesEmbeddings
         weights_dict = {'classes_edges': awa2_weights[0], 'labels_edges': awa2_weights[1]}
         set_gpu(self.args.gpu)
         graph_preparation = ImagesEmbeddings(self.args)
@@ -785,12 +785,6 @@ def main():
     plots_2measures_vs_parameter(dict_measures, parameters["seen_percentage"], 'seen Percentage', 'our_imdb',
                                  'Zero Shot Learning', "Accuracy", parameters["norma_types"][0],
                                  parameters["embedding_type"][0])
-
-
-def ab(a, b):
-    print(b)
-    b += 1
-    return b
 
 
 if __name__ == '__main__':

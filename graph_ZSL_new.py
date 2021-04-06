@@ -77,7 +77,7 @@ class GraphImporter:
         return graph
 
     def import_awa2_graph(self, awa2_weights):
-        from train_resnet_fit import Awa2GraphCreator, ImagesEmbeddings
+        from images_graph_creator import Awa2GraphCreator, ImagesEmbeddings
         weights_dict = {'classes_edges': awa2_weights[0], 'labels_edges': awa2_weights[1]}
         set_gpu(self.args.gpu)
         graph_preparation = ImagesEmbeddings(self.args)

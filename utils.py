@@ -6,6 +6,8 @@ import numpy as np
 import scipy.sparse as sp
 import torch
 
+GPU = 0
+
 
 def ensure_path(path):
     if osp.exists(path):
@@ -16,9 +18,14 @@ def ensure_path(path):
         os.mkdir(path)
 
 
+def get_device(gpu=GPU):
+    return torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else 'cpu')
+
+
 def set_gpu(gpu):
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu
     print('using gpu {}'.format(gpu))
+
 
 def set_cpu(cpu):
     os.environ['CUDA_VISIBLE_DEVICES'] = cpu
@@ -43,7 +50,7 @@ def pick_vectors(dic, wnids, is_tensor=False):
 
 
 def l2_loss(a, b):
-    return ((a - b)**2).sum() / (len(a) * 2)
+    return ((a - b) ** 2).sum() / (len(a) * 2)
 
 
 def normt_spm(mx, method='in'):
@@ -75,4 +82,3 @@ def spm_to_tensor(sparse_mx):
     values = torch.from_numpy(sparse_mx.data)
     shape = torch.Size(sparse_mx.shape)
     return torch.sparse.FloatTensor(indices, values, shape).to_dense()
-

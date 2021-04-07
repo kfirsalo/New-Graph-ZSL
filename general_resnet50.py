@@ -1,12 +1,11 @@
 from torchvision.models import resnet50
 import torch.nn as nn
 import torch.optim as optim
-from utils import get_device
 import torch
 import os
 
 class ResNet50(nn.Module):
-    def __init__(self, out_dimension: int, chkpt_dir: str, lr: float = 0.01, weight_decay=0.0):
+    def __init__(self, out_dimension: int, chkpt_dir: str, lr: float = 0.01, weight_decay=0.0, device="cpu"):
         super().__init__()
 
         self.out_dimension = out_dimension
@@ -26,7 +25,7 @@ class ResNet50(nn.Module):
 
         self.optimizer = optim.Adam(self.parameters(), lr=self.lr, weight_decay=weight_decay)
         self.loss = nn.NLLLoss()
-        self.device = get_device()
+        self.device = device
         self.to(self.device)
 
     def freeze(self):

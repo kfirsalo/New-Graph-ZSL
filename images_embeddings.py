@@ -9,7 +9,8 @@ import numpy as np
 from torch.backends import cudnn
 import random
 import argparse
-import nni
+from utils import get_device
+# import nni
 
 seed = 0
 torch.manual_seed(seed)
@@ -29,10 +30,11 @@ class ImagesEmbedding:
         self.epochs = epochs
         self.train_percentage = train_percentage
         self.lr = lr
+        self.device = get_device()
         # self.classes = self.get_classes()
         self.seen_classes, self.unseen_classes = self.classes_split()
         self.batch_size = batch_size
-        self.learning_model = ResNet50(out_dimension=len(self.seen_classes), chkpt_dir=self.chkpt_dir, lr=self.lr, weight_decay=weight_decay)
+        self.learning_model = ResNet50(out_dimension=len(self.seen_classes), chkpt_dir=self.chkpt_dir, lr=self.lr, weight_decay=weight_decay, device=self.device)
         self.train_loader, self.val_loader, self.test_loader = self._prepare_dataloader()
 
     def _prepare_dataloader(self):
@@ -68,13 +70,14 @@ class ImagesEmbedding:
         for epoch in range(self.epochs):
 
             for i, (images, labels) in enumerate(self.train_loader):
-                labels = torch.tensor(np.array(labels).astype(int), dtype=torch.long)
+                labels = torch.tensor(np.array(labels).astype(int), dtype=torch.long, device=self.device)
+                images = images.to(self.device)
                 self.learning_model.optimizer.zero_grad()
                 self.learning_model.train()
                 predictions = self.learning_model(images)
                 # one_hot_labels = torch.zeros(predictions.shape)
                 # one_hot_labels[torch.arange(predictions.shape[0]), torch.tensor(np.array(labels).astype(int), dtype=torch.long)] = 1
-                loss = self.learning_model.loss(predictions, labels).to(self.learning_model.device)
+                loss = self.learning_model.loss(predictions, labels).to(self.device)
                 loss.backward()
                 self.learning_model.optimizer.step()
                 running_loss += loss.item()
@@ -98,7 +101,8 @@ class ImagesEmbedding:
         concat = False
         with torch.no_grad():
             for i, (images, labels) in enumerate(self.val_loader):
-                labels = torch.tensor(np.array(labels).astype(int), dtype=torch.long)
+                labels = torch.tensor(np.array(labels).astype(int), dtype=torch.long, device=self.device)
+                images = images.to(self.device)
                 self.learning_model.eval()
                 predictions = self.learning_model(images)
                 predictions = torch.argmax(predictions, dim=1)

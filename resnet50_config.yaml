@@ -16,7 +16,7 @@ tuner:
 
 
 trial:
-  command: python resnet50_runner.py --dataset cub
+  command: python images_embeddings.py --dataset cub
   codeDir: .
   gpuNum: 4
 localConfig:

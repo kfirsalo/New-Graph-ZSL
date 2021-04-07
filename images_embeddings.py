@@ -82,7 +82,7 @@ class ImagesEmbedding:
                 self.learning_model.optimizer.step()
                 running_loss += loss.item()
                 final_preds = torch.argmax(predictions, dim=1)
-                accuracy.append(accuracy_score(labels, final_preds))
+                accuracy.append(accuracy_score(labels.cpu(), final_preds.cpu()))
             val_accuracy = self.eval()
             if val_accuracy > best_val_accuracy:
                 best_val_accuracy = val_accuracy
@@ -113,7 +113,7 @@ class ImagesEmbedding:
                     final_predictions = predictions
                     all_labels = labels
                     concat = True
-        return accuracy_score(all_labels, final_predictions)
+        return accuracy_score(all_labels.cpu(), final_predictions.cpu())
 
     def save_model(self):
         self.learning_model.save_checkpoint()

@@ -169,7 +169,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ResNet50 for Images Embedding")
     parser.add_argument('--nni', dest="nni", action='store_true',
                         help=' Whether to use nni')
-    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="lad")
+    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="cub")
     args = parser.parse_args()
 
     # model = ResNet50(out_dimension=150, lr=0.01)
@@ -178,7 +178,7 @@ if __name__ == "__main__":
         params = nni.get_next_parameter()
     else:
         params = {"lr": 0.0012694, "batch_size": 64, "weight_decay": 0.0000848412}
-        print(f'start training on {args.dataet}')
+        print(f'--start training on {args.dataset}--')
     images_embedding = ImagesEmbedding(args, data_dir, split_dir, chkpt_dir, lr=params["lr"], batch_size=params["batch_size"], weight_decay=params["weight_decay"])
     images_embedding.train()
     gt, predictions, _ = images_embedding.eval()

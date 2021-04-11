@@ -14,6 +14,8 @@ save_awa2/
 StaticGraphEmbeddings/
 yelp/
 ZSL _DataSets/
+save_models/cub/
+save_models/
 
 
 # Byte-compiled / optimized / DLL files

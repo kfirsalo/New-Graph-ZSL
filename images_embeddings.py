@@ -172,7 +172,6 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="cub")
     args = parser.parse_args()
 
-    # model = ResNet50(out_dimension=150, lr=0.01)
     data_dir, split_dir, chkpt_dir = define_path(args.dataset)
     if args.nni:
         params = nni.get_next_parameter()

@@ -19,9 +19,10 @@ class ResNet50(nn.Module):
 
         self.resnet50.fc = nn.Sequential(
             nn.Linear(in_features=self.in_fc_features, out_features=512),
-            nn.ReLU(),
+            nn.ReLU())
+        self.resnet50.fc1 = nn.Sequential(
             nn.Linear(in_features=512, out_features=self.out_dimension),
-            nn.LogSoftmax())
+            nn.LogSoftmax(dim=1))
 
         self.optimizer = optim.Adam(self.parameters(), lr=self.lr, weight_decay=weight_decay)
         self.loss = nn.NLLLoss()
@@ -43,6 +44,7 @@ class ResNet50(nn.Module):
 
     def forward(self, x):
         x = self.resnet50(x)
+        x = self.resnet50.fc1(x)
         # x = self.resnet50.avgpool(x).squeeze()
         # x = self.resnet50.fc(x)
         return x

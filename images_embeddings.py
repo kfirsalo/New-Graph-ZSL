@@ -10,7 +10,10 @@ from torch.backends import cudnn
 import random
 import argparse
 from utils import get_device
-# import nni
+import nni
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+from utlis_graph_zsl import plot_confusion_matrix
 
 seed = 0
 torch.manual_seed(seed)
@@ -55,10 +58,22 @@ class ImagesEmbedding:
         return np.array(os.listdir(self.images_dir))
 
     def classes_split(self):
-        train_test_split = sio.loadmat(self.split_dir)
-        classes = self.get_classes()
-        seen_classes = classes[train_test_split['train_cid'] - 1][0]
-        unseen_classes = classes[train_test_split['test_cid'] - 1][0]
+        if self.args.dataset == "cub":
+            train_test_split = sio.loadmat(self.split_dir)
+            classes = self.get_classes()
+            seen_classes = classes[train_test_split['train_cid'] - 1][0]
+            unseen_classes = classes[train_test_split['test_cid'] - 1][0]
+        elif self.args.dataset == "lad":
+            split_file = open(self.split_dir, "r")
+            unseen_lists = {l.split(":")[0]: l.split(":")[1] for l in split_file.readlines()}
+            unseen_list_1 = unseen_lists["Unseen_List_1"][:-1].replace(" ", "").split(",")
+            classes_file = open(os.path.join(self.data_dir, "label_list.txt"), encoding="utf8")
+            classes = classes_file.readlines()
+            classes_translation = {**{c.split(", ")[0]: c.split(", ")[0].split("_")[1]+"_"+c.split(", ")[1]
+                                      for c in classes}, **{c.split(", ")[0].split("_")[1]+"_"
+                                                            +c.split(", ")[1]: c.split(", ")[0] for c in classes}}
+            unseen_classes = np.array([classes_translation[c] for c in unseen_list_1])
+            seen_classes = np.setdiff1d(self.get_classes(), unseen_classes)
         return seen_classes, unseen_classes
 
     def train(self):
@@ -83,16 +98,18 @@ class ImagesEmbedding:
                 running_loss += loss.item()
                 final_preds = torch.argmax(predictions, dim=1)
                 accuracy.append(accuracy_score(labels.cpu(), final_preds.cpu()))
-            val_accuracy = self.eval()
+            _, _, val_accuracy = self.eval()
             if val_accuracy > best_val_accuracy:
                 best_val_accuracy = val_accuracy
                 best_epoch = epoch
+                self.save_best_model()
             if args.nni:
                 nni.report_intermediate_result(val_accuracy)
             else:
                 print('num_epochs:{} || loss: {} || train accuracy: {} || val accuracy: {} '
                       .format(epoch, running_loss / len(self.train_loader), np.mean(accuracy[-9:]), val_accuracy))
                 running_loss = 0.0
+                self.save_model()
         if args.nni:
             nni.report_final_result({'default': best_val_accuracy, 'best_num_epochs': best_epoch})
 
@@ -113,30 +130,56 @@ class ImagesEmbedding:
                     final_predictions = predictions
                     all_labels = labels
                     concat = True
-        return accuracy_score(all_labels.cpu(), final_predictions.cpu())
+        return all_labels.cpu(), final_predictions.cpu(), accuracy_score(all_labels.cpu(), final_predictions.cpu())
 
     def save_model(self):
         self.learning_model.save_checkpoint()
 
+    def save_best_model(self):
+        self.learning_model.save_best()
+
     def load_models(self):
         self.learning_model.load_checkpoint()
+
+    def confusion_matrix_maker(self, gt, predictions):
+        conf_matrix = confusion_matrix(gt, predictions, labels=list(set(gt)))
+        plt.figure(0)
+        title = f'Confusion Matrix, Resnet50 Classification {self.args.dataset}'
+        x_title = f"True Labels"
+        y_title = f"Predicted Labels"
+        plot_confusion_matrix(conf_matrix, title, x_title, y_title)
+        plt.savefig(f'{self.args.dataset}/plots/confusion_matrix_ResNet50_{self.args.dataset}')
+
+
+def define_path(dataset_name):
+    if dataset_name == "cub":
+        data_path = "ZSL _DataSets/cub/CUB_200_2011"
+        split_path = "ZSL _DataSets/cub/CUB_200_2011/train_test_split_easy.mat"
+        chkpt_path = 'save_models/cub'
+    elif dataset_name == "lad":
+        data_path = "ZSL _DataSets/lad"
+        split_path = "ZSL _DataSets/lad/split_zsl.txt"
+        chkpt_path = 'save_models/lad'
+    else:
+        raise ValueError("Wrong dataset name: replace with cub/lad")
+    return data_path, split_path, chkpt_path
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ResNet50 for Images Embedding")
     parser.add_argument('--nni', dest="nni", action='store_true',
                         help=' Whether to use nni')
-    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="cub")
+    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="lad")
     args = parser.parse_args()
 
     # model = ResNet50(out_dimension=150, lr=0.01)
-    if args.dataset == "cub":
-        data_dir = "ZSL _DataSets/cub/CUB_200_2011"
-        split_dir = "ZSL _DataSets/cub/CUB_200_2011/train_test_split_easy.mat"
-        chkpt_dir = 'save_models/cub'
+    data_dir, split_dir, chkpt_dir = define_path(args.dataset)
     if args.nni:
         params = nni.get_next_parameter()
     else:
-        params = {"lr": 0.01, "batch_size": 32, "weight_decay": 0.0}
+        params = {"lr": 0.0012694, "batch_size": 64, "weight_decay": 0.0000848412}
+        print(f'start training on {args.dataet}')
     images_embedding = ImagesEmbedding(args, data_dir, split_dir, chkpt_dir, lr=params["lr"], batch_size=params["batch_size"], weight_decay=params["weight_decay"])
     images_embedding.train()
+    gt, predictions, _ = images_embedding.eval()
+    images_embedding.confusion_matrix_maker(gt, predictions)

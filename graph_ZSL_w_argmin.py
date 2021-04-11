@@ -742,17 +742,15 @@ def run_grid(grid_params, res_dir, now):
     res_filename = os.path.join(res_dir, f"{grid_params['data_name'][0]}_grid_{now}.csv")
     out = open(res_filename, "wt")
     out.write(f"{','.join(HEADER)}\n")
-    out.close()
     for config in grid(grid_params):
         param = {p: config[i] for i, p in enumerate(list(grid_params.keys()))}
         acc, seen_acc, unseen_acc = obj_func_grid(param)
         table_row = config_to_str(param)
-        out = open(res_filename, "wt")
         table_row[HEADER.index('acc')] = str(acc)
         table_row[HEADER.index('seen_acc')] = str(seen_acc)
         table_row[HEADER.index('unseen_acc')] = str(unseen_acc)
         out.write(f"{','.join(table_row)}\n")
-        out.close()
+    out.close()
 
 
 def main():

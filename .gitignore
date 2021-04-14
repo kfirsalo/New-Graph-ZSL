@@ -16,6 +16,7 @@ yelp/
 ZSL _DataSets/
 save_models/cub/
 save_models/
+grid_results/
 
 
 # Byte-compiled / optimized / DLL files

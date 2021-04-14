@@ -11,6 +11,8 @@ import seaborn as sns
 from itertools import chain
 from itertools import product
 from dataclasses import dataclass
+import scipy.io as sio
+import json
 
 random.seed(0)
 np.random.seed(0)
@@ -84,6 +86,36 @@ def plot_confusion_matrix(conf_matrix, title, x_title, y_title):
     plt.imshow(conf_matrix, cmap='gist_gray', vmin=0, vmax=2)
     plt.colorbar()
 
+
+def get_classes(images_dir):
+    return np.array(os.listdir(images_dir))
+
+
+def classes_split(dataset, data_dir, split_dir):
+    images_dir = os.path.join(data_dir, "images")
+    if dataset == "awa2":
+        awa2_split = json.load(open(split_dir, 'r'))
+        seen_classes = awa2_split['train_names']
+        unseen_classes = awa2_split['test_names']
+    elif dataset == "cub":
+        train_test_split = sio.loadmat(split_dir)
+        classes = get_classes(images_dir)
+        seen_classes = classes[train_test_split['train_cid'] - 1][0]
+        unseen_classes = classes[train_test_split['test_cid'] - 1][0]
+    elif dataset == "lad":
+        split_file = open(split_dir, "r")
+        unseen_lists = {l.split(":")[0]: l.split(":")[1] for l in split_file.readlines()}
+        unseen_list_1 = unseen_lists["Unseen_List_1"][:-1].replace(" ", "").split(",")
+        classes_file = open(os.path.join(data_dir, "label_list.txt"), encoding="utf8")
+        classes = classes_file.readlines()
+        classes_translation = {**{c.split(", ")[0]: c.split(", ")[0].split("_")[1]+"_"+c.split(", ")[1]
+                                  for c in classes}, **{c.split(", ")[0].split("_")[1]+"_"
+                                                        +c.split(", ")[1]: c.split(", ")[0] for c in classes}}
+        unseen_classes = np.array([classes_translation[c] for c in unseen_list_1])
+        seen_classes = np.setdiff1d(get_classes(images_dir), unseen_classes)
+    else:
+        raise ValueError("Wrong dataset name: replace with cub/lad")
+    return seen_classes, unseen_classes
 
 # def obj_func(weights):
 #     """

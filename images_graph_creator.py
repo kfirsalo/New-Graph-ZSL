@@ -21,28 +21,28 @@ import sys
 sys.path.insert(1, "./ZSL _DataSets")
 from image_folder import ImageFolder
 from utils import set_gpu, pick_vectors
+from utlis_graph_zsl import get_classes, classes_split
 
 
 class ImagesEmbeddings:
-    def __init__(self, args):
-        self.awa2_path = 'ZSL _DataSets/awa2/Animals_with_Attributes2'
-        self.images_embed_path = 'save_awa2/matrix_embeds.npy'
-        self.dict_image_embed_path = 'save_awa2/dict_image_embed.npy'
-        self.dict_image_class_path = 'save_awa2/dict_image_class.npy'
-        self.classes_path = 'save_awa2/classes_ordered.npy'
+    def __init__(self, args, data_path, split_path, save_path):
+        self.data_path = data_path
+        self.split_path = split_path
+        self.images_embed_path = osp.join(save_path, 'matrix_embeds.npy')
+        self.dict_image_embed_path = osp.join(save_path, 'dict_image_embed.npy')
+        self.dict_image_class_path = osp.join(save_path, 'dict_image_class.npy')
+        self.classes_path = osp.join(save_path, 'classes_ordered.npy')
         self.args = args
         self.seen_classes, self.unseen_classes = self.classes()
         self.dict_name_class, self.dict_class_name = self.classes_names_translation()
         self.cnn = self.cnn_maker()
 
     def classes(self):
-        awa2_split = json.load(open('materials/awa2-split.json', 'r'))
-        seen_classes = awa2_split['train']
-        unseen_classes = awa2_split['test']
+        seen_classes, unseen_classes = classes_split(self.args.dataset, self.data_path, self.split_path)
         return seen_classes, unseen_classes
 
     def classes_names_translation(self):
-        awa2_split = json.load(open('materials/awa2-split.json', 'r'))
+        awa2_split = json.load(open(self.split_path, 'r'))
         train_names = awa2_split['train_names']
         test_names = awa2_split['test_names']
         seen_classes, unseen_classes = self.classes()
@@ -86,7 +86,7 @@ class ImagesEmbeddings:
             count = 0
             for i, name in enumerate(
                     chain(self.dict_class_name[self.unseen_classes], self.dict_class_name[self.seen_classes])):
-                dataset = ImageFolder(osp.join(self.awa2_path, 'JPEGImages'), [name], f'{action}')
+                dataset = ImageFolder(osp.join(self.data_path, 'images'), [name], f'{action}')
                 embed_matrix = torch.tensor(np.zeros((len(dataset), 2048)))
                 classes = np.concatenate((classes, np.repeat(name, len(dataset))))
                 embed_matrix, count = self.one_class_images_embed(dataset, embed_matrix, count)
@@ -109,9 +109,9 @@ class ImagesEmbeddings:
 class Awa2GraphCreator:
     def __init__(self, embed_matrix, dict_image_embed, dict_name_class, dict_idx_image_class, images_nodes_percentage,
                  args):
-        self.image_graph_path = 'save_awa2/AWA2_image_graph.gpickle'
+        self.image_graph_path = 'save_awa2/image_graph.gpickle'
         self.pre_knowledge_graph_path = 'materials/imagenet-induced-graph.json'
-        self.knowledge_graph_path = 'save_awa2/AWA2_knowledge_graph.gpickle'
+        self.knowledge_graph_path = 'save_awa2/knowledge_graph.gpickle'
         self.dict_wnids_class_translation = dict_name_class
         self.embeddings = normalize(embed_matrix, norm='l2', axis=0)
         self.dict_image_embed = dict_image_embed
@@ -273,10 +273,28 @@ class Awa2GraphCreator:
         return weighted_graph
 
 
+def define_path(dataset_name):
+    if dataset_name == "awa2":
+        _data_path = 'ZSL _DataSets/awa2/Animals_with_Attributes2'
+        _split_path = 'materials/awa2-split.json'
+        _chkpt_path = "save_data_graph/awa2"
+    elif dataset_name == "cub":
+        _data_path = "ZSL _DataSets/cub/CUB_200_2011"
+        _split_path = "ZSL _DataSets/cub/CUB_200_2011/train_test_split_easy.mat"
+        _chkpt_path = 'save_data_graph/cub'
+    elif dataset_name == "lad":
+        _data_path = "ZSL _DataSets/lad"
+        _split_path = "ZSL _DataSets/lad/split_zsl.txt"
+        _chkpt_path = 'save_data_graph/lad'
+    else:
+        raise ValueError("Wrong dataset name: replace with awa2/cub/lad")
+    return _data_path, _split_path, _chkpt_path
+
 if __name__ == '__main__':
     cuda = torch.cuda.is_available()
     # cuda = False
     parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="awa2")
     parser.add_argument('--cnn', default='materials/resnet50-base.pth')
     # parser.add_argument('--cnn', default='save_awa2/resnet-fit/epoch-1.pth')
     # parser.add_argument('--pred', default='save_awa2/gcn-dense-att/epoch-30.pred')
@@ -294,7 +312,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     set_gpu(args.gpu)
-    graph_preparation = ImagesEmbeddings(args)
+    data_path, split_path, save_path = define_path(args.dataset)
+    graph_preparation = ImagesEmbeddings(args, data_path, split_path, save_path)
     dict_name_class, dict_class_name = graph_preparation.dict_name_class, graph_preparation.dict_class_name
     seen_classes, unseen_classes = graph_preparation.seen_classes, graph_preparation.unseen_classes
     embeds_matrix, dict_image_embed, dict_image_class = graph_preparation.images_embed_calculator()

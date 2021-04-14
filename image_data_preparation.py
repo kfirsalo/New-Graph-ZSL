@@ -7,7 +7,7 @@
 # import os
 #
 # awa2_path = 'ZSL_DataSets/awa2/Animals_with_Attributes2'
-# awa2_images_path = os.path.join(awa2_path, 'JPEGImages')
+# awa2_images_path = os.path.join(awa2_path, 'images')
 
 
 import argparse

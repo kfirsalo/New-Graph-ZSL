@@ -24,7 +24,7 @@ random.seed(seed)
 
 class ImagesEmbedding:
     def __init__(self, args, data_dir, split_dir, chkpt_dir, lr=0.01, train_percentage=90, epochs=50,
-                 batch_size: int = 32, weight_decay=0.0):
+                 batch_size: int = 32, weight_decay=0.0, state_dict_path=None):
         self.data_dir = data_dir
         self.split_dir = split_dir
         self.chkpt_dir = chkpt_dir
@@ -37,7 +37,10 @@ class ImagesEmbedding:
         # self.classes = self.get_classes()
         self.seen_classes, self.unseen_classes = self.classes_split()
         self.batch_size = batch_size
-        self.learning_model = ResNet50(out_dimension=len(self.seen_classes), chkpt_dir=self.chkpt_dir, lr=self.lr, weight_decay=weight_decay, device=self.device)
+        self.learning_model = ResNet50(out_dimension=len(self.seen_classes), chkpt_dir=self.chkpt_dir, lr=self.lr,
+                                       weight_decay=weight_decay, device=self.device)
+        if state_dict_path is not None:
+            self.learning_model.load_state_dict(torch.load(state_dict_path))
         self.train_loader, self.val_loader, self.test_loader = self._prepare_dataloader()
 
     def _prepare_dataloader(self):
@@ -74,6 +77,8 @@ class ImagesEmbedding:
                                                             +c.split(", ")[1]: c.split(", ")[0] for c in classes}}
             unseen_classes = np.array([classes_translation[c] for c in unseen_list_1])
             seen_classes = np.setdiff1d(self.get_classes(), unseen_classes)
+        else:
+            raise ValueError("Wrong dataset name: replace with cub/lad")
         return seen_classes, unseen_classes
 
     def train(self):
@@ -141,14 +146,15 @@ class ImagesEmbedding:
     def load_models(self):
         self.learning_model.load_checkpoint()
 
-    def confusion_matrix_maker(self, gt, predictions):
-        conf_matrix = confusion_matrix(gt, predictions, labels=list(set(gt)))
-        plt.figure(0)
-        title = f'Confusion Matrix, Resnet50 Classification {self.args.dataset}'
-        x_title = f"True Labels"
-        y_title = f"Predicted Labels"
-        plot_confusion_matrix(conf_matrix, title, x_title, y_title)
-        plt.savefig(f'{self.args.dataset}/plots/confusion_matrix_ResNet50_{self.args.dataset}')
+
+def confusion_matrix_maker(dataset, gt, predictions):
+    conf_matrix = confusion_matrix(gt, predictions)
+    plt.figure(0)
+    title = f'Confusion Matrix, Resnet50 Classification {dataset}'
+    x_title = f"True Labels"
+    y_title = f"Predicted Labels"
+    plot_confusion_matrix(conf_matrix, title, x_title, y_title)
+    plt.savefig(f'{dataset}/plots/confusion_matrix_ResNet50_{dataset}')
 
 
 def define_path(dataset_name):
@@ -178,7 +184,8 @@ if __name__ == "__main__":
     else:
         params = {"lr": 0.0012694, "batch_size": 64, "weight_decay": 0.0000848412}
         print(f'--start training on {args.dataset}--')
-    images_embedding = ImagesEmbedding(args, data_dir, split_dir, chkpt_dir, lr=params["lr"], batch_size=params["batch_size"], weight_decay=params["weight_decay"])
+    images_embedding = ImagesEmbedding(args, data_dir, split_dir, chkpt_dir, lr=params["lr"],
+                                       batch_size=params["batch_size"], weight_decay=params["weight_decay"])
     images_embedding.train()
     gt, predictions, _ = images_embedding.eval()
-    images_embedding.confusion_matrix_maker(gt, predictions)
+    confusion_matrix_maker(args.dataset, gt, predictions)

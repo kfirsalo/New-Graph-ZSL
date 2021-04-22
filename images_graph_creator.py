@@ -109,9 +109,9 @@ class ImagesEmbeddings:
 class Awa2GraphCreator:
     def __init__(self, embed_matrix, dict_image_embed, dict_name_class, dict_idx_image_class, images_nodes_percentage,
                  args):
-        self.image_graph_path = 'save_awa2/image_graph.gpickle'
+        self.image_graph_path = 'save_data_graph/awa2/image_graph.gpickle'
         self.pre_knowledge_graph_path = 'materials/imagenet-induced-graph.json'
-        self.knowledge_graph_path = 'save_awa2/knowledge_graph.gpickle'
+        self.knowledge_graph_path = 'save_data_graph/awa2/knowledge_graph.gpickle'
         self.dict_wnids_class_translation = dict_name_class
         self.embeddings = normalize(embed_matrix, norm='l2', axis=0)
         self.dict_image_embed = dict_image_embed

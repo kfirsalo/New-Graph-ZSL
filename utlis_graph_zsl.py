@@ -67,6 +67,7 @@ def hist_plot(y_array, title, x_title, y_title):
     mpl.rcParams['ytick.labelsize'] = 16
     mpl.rcParams['axes.titlesize'] = 14
     mpl.rcParams['axes.labelsize'] = 16
+    plt.figure(0)
     plt.bar(np.arange(len(y_array)), y_array, color='black')
     plt.title(title)
     plt.xlabel(x_title)
@@ -74,8 +75,8 @@ def hist_plot(y_array, title, x_title, y_title):
     plt.tight_layout()
 
 
-def plot_confusion_matrix(conf_matrix, title, x_title, y_title):
-    plt.figure(1)
+def plot_confusion_matrix(conf_matrix, title, x_title, y_title, save_path, fig=1, vmin=0, vmax=2):
+    plt.figure(fig)
     mpl.rcParams['xtick.labelsize'] = 14
     mpl.rcParams['ytick.labelsize'] = 16
     mpl.rcParams['axes.titlesize'] = 14
@@ -83,8 +84,10 @@ def plot_confusion_matrix(conf_matrix, title, x_title, y_title):
     plt.title(title)
     plt.xlabel(x_title)
     plt.ylabel(y_title)
-    plt.imshow(conf_matrix, cmap='gist_gray', vmin=0, vmax=2)
+    plt.imshow(conf_matrix, cmap='gist_gray', vmin=vmin, vmax=vmax)
     plt.colorbar()
+    plt.savefig(save_path)
+    plt.close(fig)
 
 
 def get_classes(images_dir):

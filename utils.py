@@ -19,12 +19,14 @@ def ensure_path(path):
 
 
 def get_device(gpu=GPU):
+    device = gpu if torch.cuda.is_available() else 'cpu'
+    print(f"using device {device}")
     return torch.device("cuda:{}".format(gpu) if torch.cuda.is_available() else 'cpu')
 
 
 def set_gpu(gpu):
-    os.environ["CUDA_VISIBLE_DEVICES"] = gpu
-    print('using gpu {}'.format(gpu))
+    os.environ["CUDA_VISIBLE_DEVICES"] = f"{gpu}"
+    print('visible gpus {}'.format(gpu))
 
 
 def set_cpu(cpu):

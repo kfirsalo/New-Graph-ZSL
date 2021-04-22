@@ -17,7 +17,9 @@ ZSL _DataSets/
 save_models/cub/
 save_models/
 grid_results/
-
+cub/
+lad/
+save_data_graph/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

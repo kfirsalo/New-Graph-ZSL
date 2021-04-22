@@ -26,18 +26,19 @@ from general_resnet50 import ResNet50
 
 
 class ImagesEmbeddings:
-    def __init__(self, args, data_path, split_path, save_path, model_path):
-        self.data_path = data_path
-        self.split_path = split_path
-        self.model_path = model_path
-        self.images_path = osp.join(data_path, "images")
-        self.images_embed_path = osp.join(save_path, 'matrix_embeds.npy')
-        self.dict_image_embed_path = osp.join(save_path, 'dict_image_embed.npy')
-        self.dict_image_class_path = osp.join(save_path, 'dict_image_class.npy')
-        self.classes_path = osp.join(save_path, 'classes_ordered.npy')
-        self.args = args
+    def __init__(self, paths, _args):
+        self.data_path = paths["data_path"]
+        self.split_path = paths["split_path"]
+        self.model_path = paths["model_path"]
+        self.save_path = paths["save_path"]
+        self.images_path = osp.join(self.data_path, "images")
+        self.images_embed_path = osp.join(self.save_path, 'matrix_embeds.npy')
+        self.dict_image_embed_path = osp.join(self.save_path, 'dict_image_embed.npy')
+        self.dict_image_class_path = osp.join(self.save_path, 'dict_image_class.npy')
+        self.classes_path = osp.join(self.save_path, 'classes_ordered.npy')
+        self.args = _args
         self.device = get_device()
-        self.embeddings_dimension = 2048 if args.dataset == "awa2" else 512
+        self.embeddings_dimension = 2048 if self.args.dataset == "awa2" else 512
         self.seen_classes, self.unseen_classes = self.classes()
         self.cnn = self.cnn_maker()
 
@@ -49,9 +50,9 @@ class ImagesEmbeddings:
         if self.args.dataset == "awa2":
             cnn = make_resnet50_base()
             cnn.load_state_dict(torch.load(self.model_path))
-        elif self.args.dataset == ("cub" or "lad"):
+        elif self.args.dataset == "cub" or self.args.dataset == "lad":
             cnn = ResNet50(out_dimension=len(self.seen_classes), chkpt_dir=self.model_path, device=self.device)
-            cnn.load_checkpoint()
+            cnn.load_best()
         else:
             raise ValueError("Wrong dataset name: replace with awa2/cub/lad")
         cnn.to(self.device)
@@ -65,7 +66,12 @@ class ImagesEmbeddings:
         for batch_id, (data, _) in enumerate(loader, 1):
             data.to(self.device)
             with torch.no_grad():
-                embeds = self.cnn(data)
+                if self.args.dataset == "awa2":
+                    embeds = self.cnn(data)
+                elif self.args.dataset == "cub" or self.args.dataset == "lad":
+                    embeds = self.cnn.resnet50(data)
+                else:
+                    raise ValueError("Wrong dataset name: replace with awa2/cub/lad")
             embed_matrix[c:c + loader.batch_size, :] = embeds  # (batch_size, d)
             count += loader.batch_size
             c += loader.batch_size
@@ -79,6 +85,7 @@ class ImagesEmbeddings:
             dict_image_class = np.load(self.dict_image_class_path, allow_pickle=True).item()
             dict_image_embed = np.load(self.dict_image_embed_path, allow_pickle=True).item()
         else:
+            print("... calculate images embeddings ...")
             count = 0
             for i, name in enumerate(chain(self.unseen_classes, self.seen_classes)):
                 dataset = ImageFolder(self.images_path, [name], stage=f'{action}')
@@ -91,7 +98,7 @@ class ImagesEmbeddings:
                     embeds_matrix = embed_matrix
                     ims = im_names
                 else:
-                    embeds_matrix = torch.cat((embeds_matrix, embed_matrix), 1)
+                    embeds_matrix = torch.cat((embeds_matrix, embed_matrix), 0)
                     ims = np.concatenate((ims, im_names))
             dict_image_class = dict(zip(ims, classes))
             dict_image_embed = dict(zip(ims, embeds_matrix.numpy()))
@@ -101,30 +108,44 @@ class ImagesEmbeddings:
         return embeds_matrix, dict_image_embed, dict_image_class
 
 
-class Awa2GraphCreator:
-    def __init__(self, _data_path, _split_path, _attributes_path, embed_matrix, dict_image_embed,
-                 dict_idx_image_class, images_nodes_percentage, args):
-        self.data_path = _data_path
-        self.split_path = _split_path
-        self.attributes_path = _attributes_path
-        self.image_graph_path = 'save_data_graph/awa2/image_graph.gpickle'
-        self.pre_knowledge_graph_path = 'materials/imagenet-induced-graph.json'
-        self.knowledge_graph_path = 'save_data_graph/awa2/knowledge_graph.gpickle'
+class FinalGraphCreator:
+    def __init__(self, paths, _embed_matrix, _dict_image_embed,
+                 _dict_idx_image_class, images_nodes_percentage, _args):
+        self.args = _args
+        self.data_path = paths["data_path"]
+        self.split_path = paths["split_path"]
+        self.attributes_path = paths["attributes_path"]
+        self.image_graph_path = osp.join("save_data_graph", self.args.dataset, "image_graph.gpickle")
+        self.pre_knowledge_graph_path = paths["pre_knowledge_graph_path"]
+        self.knowledge_graph_path = osp.join("save_data_graph", self.args.dataset, "knowledge_graph.gpickle")
         self.seen_classes, self.unseen_classes = classes_split(self.args.dataset, self.data_path, self.split_path)
+        if self.args.dataset == "awa2":
+            self.dict_name_class, self.dict_class_name = self.classes_names_translation()
+            self.seen_classes = [self.dict_class_name[item] for item in self.seen_classes]
+            self.unseen_classes = [self.dict_class_name[item] for item in self.unseen_classes]
         self.nodes = None
-        self.embeddings = normalize(embed_matrix, norm='l2', axis=0)
-        self.dict_image_embed = dict_image_embed
-        self.images = list(dict_image_embed.keys())
-        self.dict_idx_image_class = dict_idx_image_class
+        self.embeddings = normalize(_embed_matrix, norm='l2', axis=0)
+        self.dict_image_embed = _dict_image_embed
+        self.images = list(_dict_image_embed.keys())
+        self.dict_idx_image_class = _dict_idx_image_class
         self.images_nodes_percentage = images_nodes_percentage
-        self.args = args
 
     def index_embed_transform(self):
         dict_index_embed = {i: item for i, item in enumerate(self.images)}
         dict_embed_index = {item: i for i, item in enumerate(self.images)}
         return dict_index_embed, dict_embed_index
 
-    def create_image_graph(self):
+    def classes_names_translation(self):
+        awa2_split = json.load(open(self.split_path, 'r'))
+        train_names = awa2_split['train']
+        test_names = awa2_split['test']
+        dict_name_class = {name: c for name, c in
+                           zip(chain(train_names, test_names), chain(self.seen_classes, self.unseen_classes))}
+        dict_class_name = {c: name for name, c in
+                           zip(chain(train_names, test_names), chain(self.seen_classes, self.unseen_classes))}
+        return dict_name_class, dict_class_name
+
+    def create_image_graph(self, _radius):
         if osp.exists(self.image_graph_path) and True:
             image_gnx = nx.read_gpickle(self.image_graph_path)
         else:
@@ -133,7 +154,7 @@ class Awa2GraphCreator:
             # image_graph.add_nodes_from(np.arange(len(self.embeddings)))
             count = 0
             for i in range(len(self.embeddings)):
-                neighbors, distances = kdt.query_radius(self.embeddings[i:i + 1], r=self.args.images_threshold,
+                neighbors, distances = kdt.query_radius(self.embeddings[i:i + 1], r=_radius["images_radius"],
                                                         return_distance=True)
                 if len(neighbors[0]) == 1:
                     distances, neighbors = kdt.query(self.embeddings[i:i + 1], k=2,
@@ -150,6 +171,7 @@ class Awa2GraphCreator:
                 count += len_neigh
                 mean = count / (i + 1)
                 if i % 1000 == 0:
+                    # try to make avg. mean between 10 to 20
                     print('Progress:', i, '/', len(self.embeddings), ';  Current Mean:', mean)  # 37273
                 weight_edges = list(zip(np.repeat(i, len(neighbors)).astype(str), neighbors.astype(str), edges_weights))
                 image_gnx.add_weighted_edges_from(weight_edges)
@@ -174,7 +196,7 @@ class Awa2GraphCreator:
             edges = [('c' + str(x[0]), 'c' + str(x[1])) for x in edges]
             kg_imagenet = nx.Graph()
             kg_imagenet.add_edges_from(edges)
-        elif self.args.dataset == ("cub" or "lad"):
+        elif self.args.dataset == "cub" or self.args.dataset == "lad":
             self.nodes = [*self.seen_classes, *self.unseen_classes]
             kg_imagenet = nx.Graph()
         else:
@@ -186,28 +208,38 @@ class Awa2GraphCreator:
         if self.args.dataset == "awa2":
             graph = json.load(open(self.pre_knowledge_graph_path, 'r'))
             all_attributes = graph['vectors']
-        elif self.args.dataset == ("cub" or "lad"):
+        elif self.args.dataset == "cub":
             all_attributes = open(self.attributes_path, "r")
             all_attributes = all_attributes.readlines()
+            all_attributes = np.array([attribute.strip().split(" ") for attribute in all_attributes]).astype(float)
+        elif self.args.dataset == "lad":
+            all_attributes = open(self.attributes_path, "r")
+            all_attributes = all_attributes.readlines()
+            all_attributes = np.array([attribute.strip().split(", ")[1].split("  ")[1:-1] for
+                                       attribute in all_attributes]).astype(float)
         else:
             raise ValueError("Wrong dataset name: replace with awa2/cub/lad")
         dict_class_nodes = {node: i for i, node in enumerate(self.nodes)}
         dict_nodes_class = {i: node for i, node in enumerate(self.nodes)}
-        dict_class_nodes_translation = {**dict_class_nodes, **dict_nodes_class}
+        # if self.args.dataset == "awa2":
+        #     dict_name_class, dict_class_name = self.classes_names_translation()
+        #     self.seen_classes = [dict_class_name[item] for item in self.seen_classes]
+        #     self.unseen_classes = [dict_class_name[item] for item in self.unseen_classes]
+        _dict_class_nodes_translation = {**dict_class_nodes, **dict_nodes_class}
         s_u_classes = [*self.seen_classes, *self.unseen_classes]
-        s_u_idx = [dict_class_nodes_translation[c] for c in s_u_classes]
-        kd_idx_to_class_idx = {i: dict_class_nodes_translation[c] for i, c in enumerate(s_u_idx)}
+        s_u_idx = [_dict_class_nodes_translation[c] for c in s_u_classes]
+        kd_idx_to_class_idx = {i: _dict_class_nodes_translation[c] for i, c in enumerate(s_u_idx)}
         attributes = np.array([all_attributes[idx] for idx in s_u_idx])
         attributes = normalize(attributes, norm='l2', axis=1)
         return kd_idx_to_class_idx, attributes
 
-    def attributed_graph(self, final_kg, att_weight):
+    def attributed_graph(self, final_kg, _dict_class_nodes_translation, att_weight, _radius):
         kd_idx_to_class_idx, attributes = self._attributes()
         kdt = KDTree(attributes, leaf_size=10)
         # image_graph.add_nodes_from(np.arange(len(self.embeddings)))
         count = 0
         for i in range(len(attributes)):
-            neighbors, distances = kdt.query_radius(attributes[i:i + 1], r=1.15,
+            neighbors, distances = kdt.query_radius(attributes[i:i + 1], r=_radius["classes_radius"],
                                                     return_distance=True)
             if len(neighbors[0]) == 1:
                 distances, neighbors = kdt.query(attributes[i:i + 1], k=2,
@@ -227,13 +259,14 @@ class Awa2GraphCreator:
             mean = count / (i + 1)
             if i % 10 == 0:
                 print('Progress:', i, '/', len(attributes), ';  Current Mean:', mean)  # 37273
-            neighbors_translation = [dict_class_nodes_translation[kd_idx_to_class_idx[neighbor]] for neighbor in
+            neighbors_translation = [_dict_class_nodes_translation[kd_idx_to_class_idx[neighbor]] for neighbor in
                                      neighbors]
-            weight_edges = list(zip(np.repeat(dict_class_nodes_translation[kd_idx_to_class_idx[i]], len(neighbors)),
+            weight_edges = list(zip(np.repeat(_dict_class_nodes_translation[kd_idx_to_class_idx[i]], len(neighbors)),
                                     neighbors_translation, edges_weights))
             final_kg.add_weighted_edges_from(weight_edges)
             # TODO: add the weight from the attributes to the pre graph and not replace them
             #  (minor problem because it is sparse graph)
+        if self.args.dataset == "awa2":
             largest_cc = max(nx.connected_components(final_kg), key=len)
             final_kg = final_kg.subgraph(largest_cc).copy()
         return final_kg
@@ -247,10 +280,16 @@ class Awa2GraphCreator:
         kg_awa2 = kg_imagenet.subgraph(relevant_nodes)
         return kg_awa2
 
-    def create_labels_graph(self, dict_class_nodes_translation):
+    def create_labels_graph(self, _dict_class_nodes_translation):
         labels_graph = nx.Graph()
-        edges = np.array([(key, dict_class_nodes_translation[self.dict_idx_image_class[key]])
-                          for key in list(self.dict_idx_image_class.keys())]).astype(str)
+        if self.args.dataset == "awa2":
+            edges = np.array([(key, _dict_class_nodes_translation[self.dict_class_name[self.dict_idx_image_class[key]]])
+                              for key in list(self.dict_idx_image_class.keys())]).astype(str)
+        elif self.args.dataset == "cub" or self.args.dataset == "lad":
+            edges = np.array([(key, _dict_class_nodes_translation[self.dict_idx_image_class[key]])
+                              for key in list(self.dict_idx_image_class.keys())]).astype(str)
+        else:
+            raise ValueError("Wrong dataset name: replace with awa2/cub/lad")
         labels_graph.add_edges_from(edges)
         return labels_graph
 
@@ -289,73 +328,74 @@ class Awa2GraphCreator:
         return weighted_graph
 
 
-def define_path(dataset_name):
+def define_graph_args(dataset_name):
     if dataset_name == "awa2":
         _data_path = 'ZSL _DataSets/awa2/Animals_with_Attributes2'
         _split_path = 'materials/awa2-split.json'
         _chkpt_path = "save_data_graph/awa2"
         _model_path = "materials/resnet50-base.pth"
         _attributes_path = ""
+        _pre_knowledge_graph_path = "materials/imagenet-induced-graph.json"
+        _radius = {"images_radius": 0.10, "classes_radius": 1.15}
     elif dataset_name == "cub":
         _data_path = "ZSL _DataSets/cub/CUB_200_2011"
         _split_path = "ZSL _DataSets/cub/CUB_200_2011/train_test_split_easy.mat"
         _chkpt_path = 'save_data_graph/cub'
-        _model_path = "save_models/cub/ResNet50_best"
+        _model_path = "save_models/cub"
         _attributes_path = "ZSL _DataSets/cub/CUB_200_2011/attributes/class_attribute_labels_continuous.txt"
+        _pre_knowledge_graph_path = ""
+        _radius = {"images_radius": 0.04, "classes_radius": 0.6}
     elif dataset_name == "lad":
         _data_path = "ZSL _DataSets/lad"
         _split_path = "ZSL _DataSets/lad/split_zsl.txt"
         _chkpt_path = 'save_data_graph/lad'
-        _model_path = "save_models/lad/ResNet50_best"
+        _model_path = "save_models/lad"
         _attributes_path = "ZSL _DataSets/lad/attributes_per_class.txt"
+        _pre_knowledge_graph_path = ""
+        _radius = {"images_radius": 0.018, "classes_radius": 0.9}
     else:
         raise ValueError("Wrong dataset name: replace with awa2/cub/lad")
-    return _data_path, _split_path, _chkpt_path, _model_path, _attributes_path
+    _dict_paths = {"data_path": _data_path, "split_path": _split_path, "save_path": _chkpt_path,
+                  "model_path": _model_path, "attributes_path": _attributes_path,
+                  "pre_knowledge_graph_path": _pre_knowledge_graph_path}
+    return _dict_paths, _radius
+
 
 if __name__ == '__main__':
-    cuda = torch.cuda.is_available()
-    # cuda = False
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="awa2")
+    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="lad")
     parser.add_argument('--cnn', default='materials/resnet50-base.pth')
     # parser.add_argument('--cnn', default='save_awa2/resnet-fit/epoch-1.pth')
     # parser.add_argument('--pred', default='save_awa2/gcn-dense-att/epoch-30.pred')
     # parser.add_argument('--pred', default='save_awa2/gcn-basic/epoch-34.pred')
-    if cuda:
-        parser.add_argument('--gpu', default='0')
-    else:
-        parser.add_argument('--gpu', default='-1')
     # parser.add_argument('--consider-trains', action='store_true')
     parser.add_argument('--consider-trains', action='store_false')
 
     parser.add_argument('--output', default=None)
-    parser.add_argument('--images_threshold', default=0.10)
     parser.add_argument('--images_nodes_percentage', default=1)
     args = parser.parse_args()
 
-    set_gpu(args.gpu)
-    data_path, split_path, save_path, model_path, attributes_path = define_path(args.dataset)
-    graph_preparation = ImagesEmbeddings(args, data_path, split_path, save_path, model_path)
-    seen_classes, unseen_classes = graph_preparation.seen_classes, graph_preparation.unseen_classes
+    dict_paths, radius = define_graph_args(args.dataset)
+    graph_preparation = ImagesEmbeddings(dict_paths, args)
     embeds_matrix, dict_image_embed, dict_image_class = graph_preparation.images_embed_calculator()
     dict_idx_image_class = {i: dict_image_class[image]
                             for i, image in enumerate(list(dict_image_class.keys()))}
-    awa2_graph_creator = Awa2GraphCreator(data_path, split_path, attributes_path, embeds_matrix, dict_image_embed,
+    final_graph_creator = FinalGraphCreator(dict_paths, embeds_matrix, dict_image_embed,
                                           dict_idx_image_class, args.images_nodes_percentage, args)
-    image_graph = awa2_graph_creator.create_image_graph()
-    kg, dict_class_nodes_translation = awa2_graph_creator.imagenet_knowledge_graph()
+    image_graph = final_graph_creator.create_image_graph(radius)
+    kg, dict_class_nodes_translation = final_graph_creator.imagenet_knowledge_graph()
     att_weight = 10
-    kg = awa2_graph_creator.attributed_graph(kg, att_weight)
+    kg = final_graph_creator.attributed_graph(kg, dict_class_nodes_translation, att_weight, radius)
+    seen_classes, unseen_classes = final_graph_creator.seen_classes, final_graph_creator.unseen_classes
     seen_classes = [dict_class_nodes_translation[c] for c in seen_classes]
     unseen_classes = [dict_class_nodes_translation[c] for c in unseen_classes]
     split = {'seen': seen_classes, 'unseen': unseen_classes}
-    labels_graph = awa2_graph_creator.create_labels_graph(dict_class_nodes_translation)
+    labels_graph = final_graph_creator.create_labels_graph(dict_class_nodes_translation)
     weights = [1, 1]
     weights_dict = {'classes_edges': weights[0], 'labels_edges': weights[1]}
-    awa2_graph = awa2_graph_creator.weighted_graph(image_graph, kg, labels_graph, weights_dict)
-    print(len(image_graph.edges))
-    print((len(image_graph.nodes)))
-    print(len(kg.edges))
-    print((len(kg.nodes)))
-    print(len(labels_graph.edges))
-    print((len(awa2_graph.edges)))
+    final_graph = final_graph_creator.weighted_graph(image_graph, kg, labels_graph, weights_dict)
+    print("image graph edges & nodes: ", len(image_graph.edges), "&", len(image_graph.nodes))
+    print("knowledge graph edges & nodes: ", len(kg.edges), "&", len(kg.nodes))
+    print("labels graph edges & nodes: ", len(labels_graph.edges), "&", len(labels_graph.nodes))
+    print("final graph edges & nodes: ", len(final_graph.edges), "&", len(final_graph.nodes))
+

@@ -61,3 +61,8 @@ class ResNet50(nn.Module):
         print('... saving best checkpoint ...')
         checkpoint_file = os.path.join(self.checkpoint_dir, self.name + '_best')
         torch.save(self.state_dict(), checkpoint_file)
+
+    def load_best(self):
+        print('... loading best checkpoint ...')
+        checkpoint_file = self.checkpoint_file + '_best'
+        self.load_state_dict(torch.load(checkpoint_file))

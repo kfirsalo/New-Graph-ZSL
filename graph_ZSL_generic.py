@@ -8,6 +8,8 @@ import numpy as np
 import networkx as nx
 import pickle
 import os
+from sklearn.preprocessing import normalize
+from statistics import harmonic_mean
 import argparse
 from numpy import linalg as la
 from sklearn.metrics.pairwise import cosine_similarity
@@ -27,16 +29,29 @@ from IMDb_data_preparation_E2V import MoviesGraph
 random.seed(0)
 np.random.seed(0)
 
-HEADER = ['movie_weights',
-          'labels_weights',
+# HEADER = ['movie_weights',
+#           'labels_weights',
+#           'embedding_type',
+#           'embedding_dimension',
+#           'norma_type',
+#           'class_edges_threshold',
+#           'seen_percentage',
+#           'dataset',
+#           'awa2_attributes_weight',
+#           'harmonic_mean',
+#           'seen_acc',
+#           'unseen_acc']
+
+HEADER = ['weights_movie_movie',
+          'weights_movie_class',
           'embedding_type',
-          'embedding_dimension',
-          'norma_type',
-          'class_edges_threshold',
+          'embedding_dimensions',
+          'norma_types',
+          'threshold',
           'seen_percentage',
-          'dataset',
+          'data_name',
           'awa2_attributes_weight',
-          'acc',
+          'harmonic_mean',
           'seen_acc',
           'unseen_acc']
 
@@ -92,9 +107,9 @@ class GraphImporter:
                 graph.add_edge(items[0], items[1], key=str(sort_att[0]) + str(sort_att[1]))
         return graph
 
-    def import_data_graph(self, awa2_weights, specific_split, att_weight):
+    def import_data_graph(self, final_graph_weights, specific_split, att_weight):
         from images_graph_creator_all import FinalGraphCreator, ImagesEmbeddings, define_graph_args
-        weights_dict = {'classes_edges': awa2_weights[0], 'labels_edges': awa2_weights[1]}
+        weights_dict = {'classes_edges': final_graph_weights[0], 'labels_edges': final_graph_weights[1]}
         dict_paths, radius = define_graph_args(self.args.dataset)
         graph_preparation = ImagesEmbeddings(dict_paths, self.args)
         embeds_matrix, dict_image_embed, dict_image_class = graph_preparation.images_embed_calculator()
@@ -619,15 +634,16 @@ class Classifier:
         #     unseen_true_count += conf_matrix[i][i]
         #     for j in range(len(conf_matrix)):
         #         unseen_count += conf_matrix[i][j]
-        accuracy = (seen_true_count + unseen_true_count) / (seen_count + unseen_count)
         seen_accuracy = seen_true_count / seen_count
         unseen_accuracy = unseen_true_count / unseen_count
+        harmonic_mean_ = harmonic_mean([seen_accuracy, unseen_accuracy])
         binary_conf_matrix = np.array([[seen_true_count, seen_count - seen_true_count],
                                        [unseen_count - unseen_true_count, unseen_true_count]])
-        print(f'accuracy all: {accuracy}')
+        binary_conf_matrix = normalize(binary_conf_matrix, norm="l1") # to add
         print(f'accuracy all seen: {seen_accuracy}')
         print(f'accuracy all unseen: {unseen_accuracy}')
-        return accuracy, seen_accuracy, unseen_accuracy, conf_matrix, binary_conf_matrix
+        print(f'Harmonic Mean all: {harmonic_mean_}')
+        return harmonic_mean_, seen_accuracy, unseen_accuracy, conf_matrix, binary_conf_matrix
 
     def plot_confusion_matrix_all_classes(self, conf_matrix, binary_conf_matrix=None):
         title = f'Confusion Matrix, ZSL {self.args.dataset} \n' \
@@ -645,7 +661,7 @@ class Classifier:
             save_path_binary = f'{self.args.dataset}/plots/binary_confusion_matrix_{self.embedding}_{self.args.norm}'\
                                f'_{int(100 * self.args.seen_percentage)}_seen_percent'
             plot_confusion_matrix(binary_conf_matrix, binary_title, x_binary, y_binary, save_path_binary, vmax=None,
-                                  vmin=None)
+                                  vmin=None, cmap=None)
 
 
 from dataclasses import dataclass
@@ -722,10 +738,10 @@ def obj_func_grid(params, specific_split=True, split=None):  # split False or Tr
                             dict_embeddings, args.embedding, args)
     dict_class_movie_test = classifier.train()
     dict_class_measures_node2vec, pred, pred_true, hist_real_unseen_pred = classifier.evaluate_for_hist(dict_class_movie_test)
-    classifier.hist_plot_for_unseen_dist_eval(hist_real_unseen_pred)
+    # classifier.hist_plot_for_unseen_dist_eval(hist_real_unseen_pred)
     accuracy, seen_accuracy, unseen_accuracy, conf_matrix, binary_conf_matrix = classifier.confusion_matrix_maker(
         dict_class_measures_node2vec, pred, pred_true)
-    classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix)
+    # classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix)
     return accuracy, seen_accuracy, unseen_accuracy
 
 
@@ -752,9 +768,9 @@ def run_grid(grid_params, res_dir, now):
     out.write(f"{','.join(HEADER)}\n")
     for config in grid(grid_params):
         param = {p: config[i] for i, p in enumerate(list(grid_params.keys()))}
-        acc, seen_acc, unseen_acc = obj_func_grid(param)
+        harmonic_mean_, seen_acc, unseen_acc = obj_func_grid(param)
         table_row = config_to_str(param)
-        table_row[HEADER.index('acc')] = str(acc)
+        table_row[HEADER.index('harmonic_mean')] = str(harmonic_mean_)
         table_row[HEADER.index('seen_acc')] = str(seen_acc)
         table_row[HEADER.index('unseen_acc')] = str(unseen_acc)
         out.write(f"{','.join(table_row)}\n")
@@ -783,7 +799,7 @@ def main():
         # param = np.array([w_m_m, w_m_c, e_type, dim, norma_type, threshold, per, data, w_att])
         print(f'iteration number {num}')
         num += 1
-        acc, seen_acc, unseen_acc = obj_func_grid(dict_param)
+        harmonic_mean_, seen_acc, unseen_acc = obj_func_grid(dict_param)
         seen_accuracies.append(seen_acc*100)
         unseen_accuracies.append(unseen_acc*100)
         # print("all accuracy: ", acc)
@@ -796,7 +812,7 @@ def main():
 if __name__ == '__main__':
     res_dir = "C:\\Users\\kfirs\\lab\\Zero Shot Learning\\New-Graph-ZSL\\grid_results"
     # now = datetime.now().strftime("%d%m%y_%H%M%S")
-    now = "01_03_21"
+    now = "27_04_21"
     # parameters = {
     #     "dataset": ['our_imdb'],  # 'awa2', 'our_imdb'
     #     "embedding_type": ["Node2Vec"],
@@ -812,25 +828,25 @@ if __name__ == '__main__':
     #     "attributes_edges_weight": [100]  # 100 is the best for now
     # }
     parameters = {
-        "dataset": ['awa2', 'our_imdb', 'lad'],  # 'awa2', 'our_imdb', 'cub', 'lad'
+        "dataset": ['awa2', 'our_imdb', 'cub', 'lad'],  # 'awa2', 'our_imdb', 'cub', 'lad'
         "embedding_type": ["Node2Vec"],
         "embedding_dimensions": [128],
-        "weights_movie_class": [1],
-        "weights_movie_movie": [1],
-        "norma_types": ['cosine'],
-        "threshold": [0.9],
+        "weights_movie_class": [10, 30, 100],
+        "weights_movie_movie": [1, 10],
+        "norma_types": ['cosine', "L2 Norm", "L1 Norm"],
+        "threshold": [0.3],
         "seen_percentage": [0.8],
         # "seen_percentage": np.linspace(0.1, 0.9, 9)
-        "attributes_edges_weight": [100]  # 100 is the best for now
+        "attributes_edges_weight": [10, 100]  # 100 is the best for now
     }
     processes = []
     parameters_by_procesess = []
     for data in parameters["dataset"]:
-        for w_m_c in parameters["weights_movie_class"]:
-            param_by_parameters = parameters.copy()
-            param_by_parameters["dataset"] = [data]
-            param_by_parameters["weights_movie_class"] = [w_m_c]
-            parameters_by_procesess.append(param_by_parameters)
+        # for w_m_c in parameters["weights_movie_class"]:
+        param_by_parameters = parameters.copy()
+        param_by_parameters["dataset"] = [data]
+            # param_by_parameters["weights_movie_class"] = [w_m_c]
+        parameters_by_procesess.append(param_by_parameters)
     for i in range(len(parameters_by_procesess)):
         proc = multiprocessing.Process(target=run_grid, args=(parameters_by_procesess[i], res_dir, now, ))
         processes.append(proc)

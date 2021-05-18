@@ -9,13 +9,14 @@ import numpy as np
 
 
 class ImageFolder(Dataset):
-    def __init__(self, path, classes, train_percentage=100, stage='train'):
+    def __init__(self, path, classes, train_percentage=90, stage='train', specific_class_names=False):
+        self.specific_class_names = specific_class_names
         self.data = []
         for i, c in enumerate(classes):
             cls_path = osp.join(path, c)
             images = os.listdir(cls_path)
             for image in images:
-                self.data.append((osp.join(cls_path, image), i))
+                self.data.append((osp.join(cls_path, image), i, c))
         self.data = np.array(self.data)
         if stage == "train":
             self.data = self.data[np.linspace(0, len(self.data)-1, int(0.01*train_percentage*len(self.data))).astype(int)]
@@ -41,7 +42,10 @@ class ImageFolder(Dataset):
         return len(self.data)
 
     def __getitem__(self, i):
-        path, label = self.data[i]
+        if self.specific_class_names:
+            path, _, label = self.data[i]
+        else:
+            path, label, _ = self.data[i]
         image = Image.open(path).convert('RGB')
         image = self.transforms(image)
         if image.shape[0] != 3 or image.shape[1] != 224 or image.shape[2] != 224:

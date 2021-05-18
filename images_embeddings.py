@@ -13,7 +13,7 @@ from utils import get_device
 import nni
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
-from utlis_graph_zsl import plot_confusion_matrix
+from utlis_graph_zsl import plot_confusion_matrix, classes_split
 
 seed = 0
 torch.manual_seed(seed)
@@ -35,7 +35,7 @@ class ImagesEmbedding:
         self.lr = lr
         self.device = get_device()
         # self.classes = self.get_classes()
-        self.seen_classes, self.unseen_classes = self.classes_split()
+        self.seen_classes, self.unseen_classes = classes_split(self.args.dataset, self.data_dir, self.split_dir)
         self.batch_size = batch_size
         self.learning_model = ResNet50(out_dimension=len(self.seen_classes), chkpt_dir=self.chkpt_dir, lr=self.lr,
                                        weight_decay=weight_decay, device=self.device)
@@ -60,26 +60,26 @@ class ImagesEmbedding:
     def get_classes(self):
         return np.array(os.listdir(self.images_dir))
 
-    def classes_split(self):
-        if self.args.dataset == "cub":
-            train_test_split = sio.loadmat(self.split_dir)
-            classes = self.get_classes()
-            seen_classes = classes[train_test_split['train_cid'] - 1][0]
-            unseen_classes = classes[train_test_split['test_cid'] - 1][0]
-        elif self.args.dataset == "lad":
-            split_file = open(self.split_dir, "r")
-            unseen_lists = {l.split(":")[0]: l.split(":")[1] for l in split_file.readlines()}
-            unseen_list_1 = unseen_lists["Unseen_List_1"][:-1].replace(" ", "").split(",")
-            classes_file = open(os.path.join(self.data_dir, "label_list.txt"), encoding="utf8")
-            classes = classes_file.readlines()
-            classes_translation = {**{c.split(", ")[0]: c.split(", ")[0].split("_")[1]+"_"+c.split(", ")[1]
-                                      for c in classes}, **{c.split(", ")[0].split("_")[1]+"_"
-                                                            +c.split(", ")[1]: c.split(", ")[0] for c in classes}}
-            unseen_classes = np.array([classes_translation[c] for c in unseen_list_1])
-            seen_classes = np.setdiff1d(self.get_classes(), unseen_classes)
-        else:
-            raise ValueError("Wrong dataset name: replace with cub/lad")
-        return seen_classes, unseen_classes
+    # def classes_split(self):
+    #     if self.args.dataset == "cub":
+    #         train_test_split = sio.loadmat(self.split_dir)
+    #         classes = self.get_classes()
+    #         seen_classes = classes[train_test_split['train_cid'] - 1][0]
+    #         unseen_classes = classes[train_test_split['test_cid'] - 1][0]
+    #     elif self.args.dataset == "lad":
+    #         split_file = open(self.split_dir, "r")
+    #         unseen_lists = {l.split(":")[0]: l.split(":")[1] for l in split_file.readlines()}
+    #         unseen_list_1 = unseen_lists["Unseen_List_1"][:-1].replace(" ", "").split(",")
+    #         classes_file = open(os.path.join(self.data_dir, "label_list.txt"), encoding="utf8")
+    #         classes = classes_file.readlines()
+    #         classes_translation = {**{c.split(", ")[0]: c.split(", ")[0].split("_")[1]+"_"+c.split(", ")[1]
+    #                                   for c in classes}, **{c.split(", ")[0].split("_")[1]+"_"
+    #                                                         +c.split(", ")[1]: c.split(", ")[0] for c in classes}}
+    #         unseen_classes = np.array([classes_translation[c] for c in unseen_list_1])
+    #         seen_classes = np.setdiff1d(self.get_classes(), unseen_classes)
+    #     else:
+    #         raise ValueError("Wrong dataset name: replace with cub/lad")
+    #     return seen_classes, unseen_classes
 
     def train(self):
         running_loss = 0.0

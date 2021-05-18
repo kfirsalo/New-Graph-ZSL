@@ -117,7 +117,7 @@ def classes_split(dataset, data_dir, split_dir):
         unseen_classes = np.array([classes_translation[c] for c in unseen_list_1])
         seen_classes = np.setdiff1d(get_classes(images_dir), unseen_classes)
     else:
-        raise ValueError("Wrong dataset name: replace with cub/lad")
+        raise ValueError("Wrong dataset name: replace with cub/lad/awa2")
     return seen_classes, unseen_classes
 
 # def obj_func(weights):

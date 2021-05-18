@@ -10,6 +10,7 @@ import numpy as np
 from itertools import chain
 import networkx as nx
 import random
+from tqdm import tqdm
 
 import torch
 from torch.utils.data import DataLoader
@@ -35,14 +36,16 @@ class ImagesEmbeddings:
         self.images_embed_path = osp.join(self.save_path, 'matrix_embeds.npy')
         self.dict_image_embed_path = osp.join(self.save_path, 'dict_image_embed.npy')
         self.dict_image_class_path = osp.join(self.save_path, 'dict_image_class.npy')
+        self.val_images_names_path = osp.join(self.save_path, "val_images_names.npy")
         self.classes_path = osp.join(self.save_path, 'classes_ordered.npy')
         self.args = _args
         self.device = get_device()
         self.embeddings_dimension = 2048 if self.args.dataset == "awa2" else 512
-        self.seen_classes, self.unseen_classes = self.classes()
+        self.seen_classes, self.unseen_classes = self.get_classes()
+        self.classes = [*self.seen_classes, *self.unseen_classes]
         self.cnn = self.cnn_maker()
 
-    def classes(self):
+    def get_classes(self):
         seen_classes, unseen_classes = classes_split(self.args.dataset, self.data_path, self.split_path)
         return seen_classes, unseen_classes
 
@@ -59,11 +62,13 @@ class ImagesEmbeddings:
         cnn.eval()
         return cnn
 
-    def one_class_images_embed(self, dataset, embed_matrix, count):
+    def one_class_images_embed(self, dataset, embed_matrix, stage="Train"):
         loader = DataLoader(dataset=dataset, batch_size=64,
                             shuffle=False, num_workers=4, pin_memory=True)
         c = 0
-        for batch_id, (data, _) in enumerate(loader, 1):
+        classes = []
+        for data, cls in tqdm(loader, desc=f"{stage} Images Embedding Extract"):
+            classes.extend(cls)
             data.to(self.device)
             with torch.no_grad():
                 if self.args.dataset == "awa2":
@@ -73,40 +78,73 @@ class ImagesEmbeddings:
                 else:
                     raise ValueError("Wrong dataset name: replace with awa2/cub/lad")
             embed_matrix[c:c + loader.batch_size, :] = embeds  # (batch_size, d)
-            count += loader.batch_size
             c += loader.batch_size
-        return embed_matrix, count
+        return embed_matrix, classes
+
+    # def images_embed_calculator(self):
+    #     action = 'test'
+    #     classes = np.array([])
+    #     if osp.exists(self.images_embed_path) and True:
+    #         embeds_matrix = np.load(self.images_embed_path, allow_pickle=True)
+    #         dict_image_class = np.load(self.dict_image_class_path, allow_pickle=True).item()
+    #         dict_image_embed = np.load(self.dict_image_embed_path, allow_pickle=True).item()
+    #     else:
+    #         print("... calculate images embeddings ...")
+    #         count = 0
+    #         for i, name in enumerate(chain(self.unseen_classes, self.seen_classes)):
+    #             dataset = ImageFolder(self.images_path, [name], stage=f'{action}')
+    #             embed_matrix = torch.tensor(np.zeros((len(dataset), self.embeddings_dimension)))
+    #             classes = np.concatenate((classes, np.repeat(name, len(dataset))))
+    #             embed_matrix, count = self.one_class_images_embed(dataset, embed_matrix, count)
+    #             im_paths = np.array(dataset.data).T[0]
+    #             im_names = np.array([item.replace("\\", "/").split('/')[-1].split('.')[0] for item in im_paths])
+    #             if i == 0:
+    #                 embeds_matrix = embed_matrix
+    #                 ims = im_names
+    #             else:
+    #                 embeds_matrix = torch.cat((embeds_matrix, embed_matrix), 0)
+    #                 ims = np.concatenate((ims, im_names))
+    #         dict_image_class = dict(zip(ims, classes))
+    #         dict_image_embed = dict(zip(ims, embeds_matrix.numpy()))
+    #         np.save(self.images_embed_path, embeds_matrix)
+    #         np.save(self.dict_image_class_path, dict_image_class)
+    #         np.save(self.dict_image_embed_path, dict_image_embed)
+    #     return embeds_matrix, dict_image_embed, dict_image_class
 
     def images_embed_calculator(self):
-        action = 'test'
-        classes = np.array([])
-        if osp.exists(self.images_embed_path) and True:
+        if osp.exists(self.images_embed_path) and osp.exists(self.val_images_names_path) and True:
             embeds_matrix = np.load(self.images_embed_path, allow_pickle=True)
             dict_image_class = np.load(self.dict_image_class_path, allow_pickle=True).item()
             dict_image_embed = np.load(self.dict_image_embed_path, allow_pickle=True).item()
+            val_im_names = np.load(self.val_images_names_path, allow_pickle=True)
         else:
             print("... calculate images embeddings ...")
-            count = 0
-            for i, name in enumerate(chain(self.unseen_classes, self.seen_classes)):
-                dataset = ImageFolder(self.images_path, [name], stage=f'{action}')
-                embed_matrix = torch.tensor(np.zeros((len(dataset), self.embeddings_dimension)))
-                classes = np.concatenate((classes, np.repeat(name, len(dataset))))
-                embed_matrix, count = self.one_class_images_embed(dataset, embed_matrix, count)
-                im_paths = np.array(dataset.data).T[0]
-                im_names = np.array([item.replace("\\", "/").split('/')[-1].split('.')[0] for item in im_paths])
-                if i == 0:
-                    embeds_matrix = embed_matrix
-                    ims = im_names
-                else:
-                    embeds_matrix = torch.cat((embeds_matrix, embed_matrix), 0)
-                    ims = np.concatenate((ims, im_names))
+            train_set = ImageFolder(self.images_path, self.seen_classes, train_percentage=self.args.train_percentage,
+                                    stage='train', specific_class_names=True)
+            val_set = ImageFolder(self.images_path, self.seen_classes, train_percentage=self.args.train_percentage,
+                                  stage='val', specific_class_names=True)
+            test_set = ImageFolder(self.images_path, self.unseen_classes, stage='test', specific_class_names=True)
+            train_embed_matrix, train_im_names, train_classes = self.embedding_extractor(train_set, stage="Train")
+            val_embed_matrix, val_im_names, val_classes = self.embedding_extractor(val_set, stage="Validation")
+            test_embed_matrix, test_im_names, test_classes = self.embedding_extractor(test_set, stage="Test")
+            # test_classes = np.array(test_classes).astype(int) + np.max(np.array(val_classes).astype(int)+1).astype(str)
+            embeds_matrix = torch.cat((train_embed_matrix, val_embed_matrix, test_embed_matrix), 0)
+            ims = np.concatenate((train_im_names, val_im_names, test_im_names))
+            classes = np.concatenate((train_classes, val_classes, test_classes))
             dict_image_class = dict(zip(ims, classes))
             dict_image_embed = dict(zip(ims, embeds_matrix.numpy()))
             np.save(self.images_embed_path, embeds_matrix)
             np.save(self.dict_image_class_path, dict_image_class)
             np.save(self.dict_image_embed_path, dict_image_embed)
-        return embeds_matrix, dict_image_embed, dict_image_class
+            np.save(self.val_images_names_path, val_im_names)
+        return embeds_matrix, dict_image_embed, dict_image_class, val_im_names
 
+    def embedding_extractor(self, dataset, stage):
+        embed_matrix = torch.tensor(np.zeros((len(dataset), self.embeddings_dimension)))
+        embed_matrix, classes = self.one_class_images_embed(dataset, embed_matrix, stage)
+        im_paths = np.array(dataset.data).T[0]
+        im_names = np.array([item.replace("\\", "/").split('/')[-1].split('.')[0] for item in im_paths])
+        return embed_matrix, im_names, classes
 
 class FinalGraphCreator:
     def __init__(self, paths, _embed_matrix, _dict_image_embed,
@@ -153,7 +191,7 @@ class FinalGraphCreator:
             kdt = KDTree(self.embeddings, leaf_size=40)
             # image_graph.add_nodes_from(np.arange(len(self.embeddings)))
             count = 0
-            for i in range(len(self.embeddings)):
+            for i in tqdm(range(len(self.embeddings)), desc="Create Image Graph"):
                 neighbors, distances = kdt.query_radius(self.embeddings[i:i + 1], r=_radius["images_radius"],
                                                         return_distance=True)
                 if len(neighbors[0]) == 1:
@@ -283,7 +321,7 @@ class FinalGraphCreator:
     def create_labels_graph(self, _dict_class_nodes_translation):
         labels_graph = nx.Graph()
         if self.args.dataset == "awa2":
-            edges = np.array([(key, _dict_class_nodes_translation[self.dict_class_name[self.dict_idx_image_class[key]]])
+            edges = np.array([(key, _dict_class_nodes_translation[self.dict_class_name[self.dict_idx_image_class[key]]])  # dict_class_nodes_translation ?
                               for key in list(self.dict_idx_image_class.keys())]).astype(str)
         elif self.args.dataset == "cub" or self.args.dataset == "lad":
             edges = np.array([(key, _dict_class_nodes_translation[self.dict_idx_image_class[key]])
@@ -370,15 +408,15 @@ if __name__ == '__main__':
     # parser.add_argument('--pred', default='save_awa2/gcn-basic/epoch-34.pred')
     # parser.add_argument('--consider-trains', action='store_true')
     parser.add_argument('--consider-trains', action='store_false')
-
+    parser.add_argument("train_percentage", help="train percentage from the seen images", default=90)
     parser.add_argument('--output', default=None)
     parser.add_argument('--images_nodes_percentage', default=1)
     args = parser.parse_args()
 
     dict_paths, radius = define_graph_args(args.dataset)
     graph_preparation = ImagesEmbeddings(dict_paths, args)
-    embeds_matrix, dict_image_embed, dict_image_class = graph_preparation.images_embed_calculator()
-    dict_idx_image_class = {i: dict_image_class[image]
+    embeds_matrix, dict_image_embed, dict_image_class, val_images = graph_preparation.images_embed_calculator()
+    dict_idx_image_class = {i: "c"+dict_image_class[image]
                             for i, image in enumerate(list(dict_image_class.keys()))}
     final_graph_creator = FinalGraphCreator(dict_paths, embeds_matrix, dict_image_embed,
                                           dict_idx_image_class, args.images_nodes_percentage, args)

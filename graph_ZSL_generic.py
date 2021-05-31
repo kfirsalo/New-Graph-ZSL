@@ -58,7 +58,11 @@ HEADER = ['weights_movie_movie',
           'awa2_attributes_weight',
           'harmonic_mean',
           'seen_acc',
-          'unseen_acc']
+          'unseen_acc',
+          'seen_only_acc',
+          'unseen_only_acc',
+          'seen_count',
+          'unseen_count']
 
 
 class GraphImporter:
@@ -128,7 +132,11 @@ class GraphImporter:
                                                 dict_idx_image_class, self.args.images_nodes_percentage, self.args)
         image_graph = final_graph_creator.create_image_graph(radius)
         kg, dict_class_nodes_translation = final_graph_creator.imagenet_knowledge_graph()
-        dict_val_edges = {img: dict_class_nodes_translation[dict_val_edges[img]] for img in list(dict_val_edges.keys())}
+        if self.args.dataset == "awa2":
+            dict_class_name = final_graph_creator.dict_class_name
+            dict_val_edges = {img: dict_class_nodes_translation[dict_class_name[dict_val_edges[img]]] for img in list(dict_val_edges.keys())}
+        else:
+            dict_val_edges = {img: dict_class_nodes_translation[dict_val_edges[img]] for img in list(dict_val_edges.keys())}
         kg = final_graph_creator.attributed_graph(kg, dict_class_nodes_translation, att_weight, radius)
         seen_classes, unseen_classes = final_graph_creator.seen_classes, final_graph_creator.unseen_classes
         seen_classes = [dict_class_nodes_translation[c] for c in seen_classes]
@@ -681,15 +689,20 @@ class Classifier:
         seen_accuracy = seen_true_count / seen_count
         unseen_accuracy = unseen_true_count / unseen_count
         harmonic_mean_ = harmonic_mean([seen_accuracy, unseen_accuracy])
+        s_o_acc = binary_seen_true_count / seen_count
+        u_o_acc = binary_unseen_true_count / unseen_count
+        measures = {"seen_accuracy": seen_accuracy, "unseen_accuracy": unseen_accuracy, "harmonic_mean": harmonic_mean_,
+                    "seen_only_accuracy": s_o_acc, "unseen_only_accuracy": u_o_acc, "seen_count": seen_count,
+                    "unseen_count": unseen_count}
         # seen_unseen_conf_matrix = np.array([[seen_true_count, seen_count - seen_true_count],
         #                                [unseen_count - unseen_true_count, unseen_true_count]])
         binary_conf_matrix = np.array([[binary_seen_true_count, seen_count - binary_seen_true_count],
                                        [unseen_count - binary_unseen_true_count, binary_unseen_true_count]])
         binary_conf_matrix = normalize(binary_conf_matrix, norm="l1") # to add
-        print(f'accuracy all seen: {seen_accuracy}')
-        print(f'accuracy all unseen: {unseen_accuracy}')
-        print(f'Harmonic Mean all: {harmonic_mean_}')
-        return harmonic_mean_, seen_accuracy, unseen_accuracy, conf_matrix, binary_conf_matrix
+        print(f"Total Seen Examples: {seen_count} || Total Unseen Examples: {unseen_count}")
+        print(f'Seen Accuracy: {seen_accuracy} || Unseen Accuracy: {unseen_accuracy} || Harmonic Mean: {harmonic_mean_}')
+        print(f'Seen Only Accuracy: {s_o_acc} || Unseen Only Accuracy: {u_o_acc}')
+        return measures, conf_matrix, binary_conf_matrix
 
     def plot_confusion_matrix_all_classes(self, conf_matrix, binary_conf_matrix=None):
         title = f'Confusion Matrix, ZSL {self.args.dataset} \n' \
@@ -726,6 +739,7 @@ def define_args(params):
     print(params)
     weights = np.array([params['weights_movie_movie'], params['weights_movie_class']]).astype(float)
     parser = argparse.ArgumentParser()
+    parser.add_argument('--graph_percentage', default=0.05)
     parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default=params['dataset']) # our_imdb, awa2, cub, lad
     parser.add_argument('--threshold', default=params['threshold'])
     parser.add_argument('--norm', default=params['norma_types'])  # cosine / L2 Norm / L1 Norm
@@ -736,7 +750,6 @@ def define_args(params):
     parser.add_argument('--seen_percentage', default=float(params['seen_percentage']))
     parser.add_argument('--embedding_dimension', default=int(params['embedding_dimensions']))
     parser.add_argument('--unseen_weight_advantage', default=0.9)
-    parser.add_argument('--graph_percentage', default=0.1)
     if params['dataset'] == 'awa2' or params['dataset'] == 'cub' or params['dataset'] == 'lad':
         parser.add_argument("--train_percentage", help="train percentage from the seen images", default=90)
 
@@ -788,10 +801,10 @@ def obj_func_grid(params, specific_split=True, split=None):  # split False or Tr
     dict_class_movie_test = classifier.train()
     dict_class_measures_node2vec, pred, pred_true, hist_real_unseen_pred = classifier.evaluate_for_hist(dict_class_movie_test)
     # classifier.hist_plot_for_unseen_dist_eval(hist_real_unseen_pred)
-    _harmonic_mean, seen_accuracy, unseen_accuracy, conf_matrix, binary_conf_matrix = classifier.confusion_matrix_maker(
+    measures, conf_matrix, binary_conf_matrix = classifier.confusion_matrix_maker(
         dict_class_measures_node2vec, pred, pred_true)
     classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix)
-    return _harmonic_mean, seen_accuracy, unseen_accuracy
+    return measures
 
 
 def flatten_dict(d):
@@ -817,11 +830,15 @@ def run_grid(grid_params, res_dir, now):
     out.write(f"{','.join(HEADER)}\n")
     for config in grid(grid_params):
         param = {p: config[i] for i, p in enumerate(list(grid_params.keys()))}
-        harmonic_mean_, seen_acc, unseen_acc = obj_func_grid(param)
+        measures = obj_func_grid(param)
         table_row = config_to_str(param)
-        table_row[HEADER.index('harmonic_mean')] = str(harmonic_mean_)
-        table_row[HEADER.index('seen_acc')] = str(seen_acc)
-        table_row[HEADER.index('unseen_acc')] = str(unseen_acc)
+        table_row[HEADER.index('harmonic_mean')] = str(measures["harmonic_mean"])
+        table_row[HEADER.index('seen_acc')] = str(measures["seen_accuracy"])
+        table_row[HEADER.index('unseen_acc')] = str(measures["unseen_accuracy"])
+        table_row[HEADER.index('seen_only_acc')] = str(measures["seen_only_accuracy"])
+        table_row[HEADER.index('unseen_only_acc')] = str(measures["unseen_only_accuracy"])
+        table_row[HEADER.index('seen_count')] = str(measures["seen_count"])
+        table_row[HEADER.index('unseen_count')] = str(measures["unseen_count"])
         out.write(f"{','.join(table_row)}\n")
     out.close()
 
@@ -861,7 +878,7 @@ def main():
 if __name__ == '__main__':
     res_dir = "C:\\Users\\kfirs\\lab\\Zero Shot Learning\\New-Graph-ZSL\\grid_results"
     # now = datetime.now().strftime("%d%m%y_%H%M%S")
-    now = "29_04_21"
+    now = "31_05_21"
     # parameters = {
     #     "dataset": ['our_imdb'],  # 'awa2', 'our_imdb'
     #     "embedding_type": ["Node2Vec"],
@@ -877,7 +894,7 @@ if __name__ == '__main__':
     #     "attributes_edges_weight": [100]  # 100 is the best for now
     # }
     parameters = {
-        "dataset": ['cub'],  # 'awa2', 'our_imdb', 'cub', 'lad'
+        "dataset": ['awa2', 'our_imdb', 'cub', 'lad'],  # 'awa2', 'our_imdb', 'cub', 'lad'
         "embedding_type": ["Node2Vec"],
         "embedding_dimensions": [128],
         "weights_movie_class": [30],
@@ -897,6 +914,7 @@ if __name__ == '__main__':
             # param_by_parameters["weights_movie_class"] = [w_m_c]
         parameters_by_procesess.append(param_by_parameters)
     for i in range(len(parameters_by_procesess)):
+        # run_grid(parameters_by_procesess[i], res_dir, now)
         proc = multiprocessing.Process(target=run_grid, args=(parameters_by_procesess[i], res_dir, now, ))
         processes.append(proc)
         proc.start()

@@ -21,8 +21,17 @@ import matplotlib.pyplot as plt
 from itertools import chain
 from utils import set_gpu
 from utlis_graph_zsl import hist_plot, plot_confusion_matrix, plots_2measures_vs_parameter
+from keras.models import Sequential
+import tensorflow as tf
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Conv2D, Flatten, Dense, Activation
+import keras
 import torch
 from torch.backends import cudnn
+from gem.embedding.gf import GraphFactorization
+from gem.embedding.hope import HOPE
+from gem.embedding.lap import LaplacianEigenmaps
+from gem.embedding.lle import LocallyLinearEmbedding
 
 seed = 0
 torch.manual_seed(seed)
@@ -30,10 +39,12 @@ np.random.seed(seed)
 cudnn.deterministic = True
 random.seed(seed)
 
+
 class GraphImporter:
     """
     class that responsible to import or create the relevant graph
     """
+
     def __init__(self, args):
         self.dataset = args.dataset
         self.graph_percentage = args.graph_percentage
@@ -88,13 +99,24 @@ class GraphImporter:
         weights_dict = {'classes_edges': final_graph_weights[0], 'labels_edges': final_graph_weights[1]}
         dict_paths, radius = define_graph_args(self.args.dataset)
         graph_preparation = ImagesEmbeddings(dict_paths, self.args)
-        embeds_matrix, dict_image_embed, dict_image_class = graph_preparation.images_embed_calculator()
-        dict_idx_image_class = {i: dict_image_class[image]
-                                for i, image in enumerate(list(dict_image_class.keys()))}
+        embeds_matrix, dict_image_embed, dict_image_class, val_images = graph_preparation.images_embed_calculator()
+        dict_val_image_class = {image: dict_image_class[image] for image in val_images}
+        dict_idx_image_class, dict_val_edges = {}, {}
+        for i, image in enumerate(list(dict_image_class.keys())):
+            dict_idx_image_class[str(i)] = dict_image_class[image]
+            if dict_val_image_class.get(image) is not None:
+                dict_val_edges[str(i)] = dict_image_class[image]
         final_graph_creator = FinalGraphCreator(dict_paths, embeds_matrix, dict_image_embed,
-                                                dict_idx_image_class, self.args.images_nodes_percentage, self.args)
+                                                dict_idx_image_class, self.args.graph_percentage, self.args)
         image_graph = final_graph_creator.create_image_graph(radius)
         kg, dict_class_nodes_translation = final_graph_creator.imagenet_knowledge_graph()
+        if self.args.dataset == "awa2":
+            dict_class_name = final_graph_creator.dict_class_name
+            dict_val_edges = {img: dict_class_nodes_translation[dict_class_name[dict_val_edges[img]]] for img in
+                              list(dict_val_edges.keys())}
+        else:
+            dict_val_edges = {img: dict_class_nodes_translation[dict_val_edges[img]] for img in
+                              list(dict_val_edges.keys())}
         kg = final_graph_creator.attributed_graph(kg, dict_class_nodes_translation, att_weight, radius)
         seen_classes, unseen_classes = final_graph_creator.seen_classes, final_graph_creator.unseen_classes
         seen_classes = [dict_class_nodes_translation[c] for c in seen_classes]
@@ -107,19 +129,21 @@ class GraphImporter:
         print("labels graph edges & nodes: ", len(labels_graph.edges), "&", len(labels_graph.nodes))
         print("final graph edges & nodes: ", len(final_graph.edges), "&", len(final_graph.nodes))
 
-
         nx.write_gpickle(final_graph, f'{self.args.dataset}/train/{self.args.dataset}_graph')
         if specific_split:
-            return final_graph, split
+            return final_graph, dict_val_edges, split
         else:
             split = None
-            return final_graph, split
+            return final_graph, dict_val_edges, split
+
 
 class EmbeddingCreator(object):
-    def __init__(self, graph=None, dimension=None, args=None):
-        self.dataset = args.dataset
+    def __init__(self, graph=None, dimension=None, data=None, embedding_type=None):
+        self.dataset = data
+        self.embedding = embedding_type
         self.dim = dimension
         self.graph = graph
+        self.dict_embeddings = self.create_dict_embeddings()
 
     def create_node2vec_embeddings(self):
         path1 = os.path.join(self.dataset, 'Node2Vec_embedding.pickle')
@@ -149,7 +173,7 @@ class EmbeddingCreator(object):
         for i in range(len(nodes)):
             dict_embeddings.update({nodes[i]: np.asarray(model.wv.get_vector(str(nodes[i])))})
         with open(path1, 'wb') as handle:
-             pickle.dump(dict_embeddings, handle, protocol=3)
+            pickle.dump(dict_embeddings, handle, protocol=3)
         return dict_embeddings
 
     def create_event2vec_embeddings(self):
@@ -174,6 +198,39 @@ class EmbeddingCreator(object):
             static_embeddings = StaticEmbeddings(name='pw', graph=self.graph, dim=self.dim)
         dict_embeddings = static_embeddings.dict_embedding
         return dict_embeddings
+
+    def create_hope_embeddings(self):
+        hope = HOPE(d=self.dim, beta=0.01)
+        x, _ = hope.learn_embedding(self.graph, is_weighted=True)
+        nodes = list(self.graph.nodes())
+        dict_embeddings = {}
+        for i in range(len(nodes)):
+            dict_embeddings[nodes[i]] = x[i]
+        return dict_embeddings
+
+    def create_gf_embeddings(self):
+        gf = GraphFactorization(d=self.dim)
+        x, _ = gf.learn_embedding(self.graph, is_weighted=True)
+        nodes = list(self.graph.nodes())
+        dict_embeddings = {}
+        for i in range(len(nodes)):
+            dict_embeddings[nodes[i]] = x[i]
+        return dict_embeddings
+
+    def create_dict_embeddings(self):
+        if self.embedding == 'Node2Vec':
+            dict_embeddings = self.create_node2vec_embeddings()
+        elif self.embedding == 'hope':
+            dict_embeddings = self.create_hope_embeddings()
+        elif self.embedding == 'graph_factorization':
+            dict_embeddings = self.create_gf_embeddings()
+        elif self.embedding == 'Event2Vec':
+            dict_embeddings = self.create_event2vec_embeddings()
+        # elif self.embedding == 'OGRE':
+        #     initial_nodes = edges_preparation.ogre_initial_nodes()
+        #     dict_embeddings = embeddings_maker.create_ogre_embeddings(user_initial_nodes_choice=initial_nodes)
+        else:
+            raise ValueError(f"Wrong name of embedding, {self.embedding}")
 
 
 class TopKRanker(OneVsRestClassifier):
@@ -200,7 +257,7 @@ class EdgesPreparation:
         self.split = split
         self.graph = graph
         self.label_edges = self.make_label_edges()
-        self.unseen_edges, self.test_edges, self.dict_test_edges, self.dict_train_edges, self.dict_unseen_edges\
+        self.unseen_edges, self.test_edges, self.dict_test_edges, self.dict_train_edges, self.dict_unseen_edges \
             = self.train_test_unseen_split()
         self.a = 1
 
@@ -236,9 +293,11 @@ class EdgesPreparation:
         dict_class_label_edge = {}
         for edge in edge_data:
             if edge[0][0] == 'c':
-                label = edge[0]
-            else:
-                label = edge[1]
+                edge = [edge[1], edge[0]]
+            label = edge[1]
+            #     label = edge[0]
+            # else:
+            #     label = edge[1]
             if dict_class_label_edge.get(label) is not None:
                 edges = dict_class_label_edge[label]
                 edges.append(edge)
@@ -328,11 +387,12 @@ class EdgesPreparation:
         for label in labels:
             for edge in dict_class_label_edge[label]:
                 if edge[0][0] == 'c':
-                    label = edge[0]
-                    movie = edge[1]
-                else:
-                    label = edge[1]
-                    movie = edge[0]
+                    edge = [edge[1], edge[0]]
+                #     label = edge[0]
+                #     movie = edge[1]
+                # else:
+                label = edge[1]
+                movie = edge[0]
                 if len(false_labels) < self.args.false_per_true + 1:
                     false_labels = list(set(labels) - set([label]))  # The set makes every run different edges.
                 else:
@@ -358,7 +418,7 @@ class EdgesPreparation:
 
 class Classifier:
     def __init__(self, dict_train_true, dict_train_false, dict_test_true, dict_unseen_edges,
-                 dict_projections, embedding, args, linear_classifier=True):
+                 dict_projections, embedding, args, linear_classifier=False):
         self.args = args
         self.embedding = embedding
         self.dict_true_edges = dict_train_true
@@ -456,7 +516,7 @@ class Classifier:
     def calculate_by_single_norm(self, true_edges, false_edges):
         x_true, x_false = np.zeros(shape=(len(true_edges), 1)), np.zeros(shape=(len(false_edges), 1))
         y_true_edge, y_false_edge = np.zeros(shape=(len(true_edges), 4)).astype(int), \
-            np.zeros(shape=(len(false_edges), 4)).astype(int)
+                                    np.zeros(shape=(len(false_edges), 4)).astype(int)
         for i, edge in enumerate(true_edges):
             norm = self.edge_distance(edge)
             x_true[i, 0] = norm
@@ -481,7 +541,9 @@ class Classifier:
         """
         model = LogisticRegression()
         parameters = {"penalty": ["l2"], "C": [0.01, 0.1, 1]}
-        model = TopKRanker(GridSearchCV(model, param_grid=parameters, cv=2, scoring='balanced_accuracy', n_jobs=1, verbose=0, pre_dispatch='n_jobs'))
+        model = TopKRanker(
+            GridSearchCV(model, param_grid=parameters, cv=2, scoring='balanced_accuracy', n_jobs=1, verbose=0,
+                         pre_dispatch='n_jobs'))
         model.fit(x_train, y_train)
         return model
 
@@ -490,33 +552,34 @@ class Classifier:
         """
         :param input_shape: tuple - shape of a single sample (2d, 1)
         """
-        from keras.models import Sequential
-        import tensorflow as tf
-        from keras.layers import Dense, Activation
-        import keras
-        model = Sequential()
 
-        model.add(Dense(hidden_layer_size, activation="relu", input_shape=(input_shape, )))
+        model = tf.keras.Sequential()
+
+        model.add(Dense(hidden_layer_size, activation="relu", input_shape=(input_shape,)))
         model.add(Dense(1))
         model.add(Activation('sigmoid'))
 
-        opti = keras.optimizers.Adam(learning_rate=0.01)
+        # opti = keras.optimizers.Adam(learning_rate=0.01)
 
         model.compile(optimizer="Adam", loss="binary_crossentropy", metrics=[tf.keras.metrics.AUC()])
         model.summary()
 
+        # parameters = {"learning_rate": [0.005, 0.01, 0.1]}
+        # model = GridSearchCV(model, param_grid=parameters, cv=2, scoring='balanced_accuracy', n_jobs=1, verbose=0,
+        #                      pre_dispatch='n_jobs')
         return model
 
     @staticmethod
     def keras_model_fit(model, x_train, y):
-        y_train = y.reshape((-1, 1))
+        y_train = y[:, 0]
+        tf.config.run_functions_eagerly(True)
         model.fit(x_train, y_train, epochs=5)
         print("done fitting")
         return model
 
     @staticmethod
     def keras_model_predict(model, x_test):
-        y_pred = model.predict_proba(x_test)
+        y_pred = model.predict(x_test)
         return y_pred
 
     @staticmethod
@@ -526,8 +589,8 @@ class Classifier:
         :param ratio: determine the train size.
         :return: THe split data
         """
-        x_train, y_train = np.concatenate((x_true, x_false), axis=0),\
-                                np.concatenate((y_true_edge, y_false_edge), axis=0)
+        x_train, y_train = np.concatenate((x_true, x_false), axis=0), \
+                           np.concatenate((y_true_edge, y_false_edge), axis=0)
         # y_train = np.array([y_train_edge.T[0].reshape(-1, 1), y_train_edge.T[1].reshape(-1, 1)]).T.reshape(-1,
         #                                                                                                    2).astype(
         #     int)
@@ -564,14 +627,19 @@ class Classifier:
                 x_train_all = x_train
                 y_train_all = y_train
         shuff = np.c_[x_train_all.reshape(len(x_train_all), -1), y_train_all.reshape(len(y_train_all), -1)]
-        random.Random(4).shuffle(shuff)
-        x_train_all = shuff.T[0].reshape(-1, 1)
-        y_train_all = np.array([shuff.T[1].reshape(-1, 1), shuff.T[2].reshape(-1, 1)]).T.reshape(-1, 2).astype(
-            int)
+        # random.Random(4).shuffle(shuff)
+        np.random.shuffle(shuff)
+        # if self.linear_classifier:
+        #     x_train_all = shuff.T[0].reshape(-1, 1)
+        #     y_train_all = np.array([shuff.T[1].reshape(-1, 1), shuff.T[2].reshape(-1, 1)]).T.reshape(-1, 2).astype(
+        #         int)
+        x_train_all = shuff[:, :-2]
+        y_train_all = shuff[:, -2:].astype(int)
         if self.linear_classifier:
             classif2 = self.train_edge_classification(np.array(x_train_all), np.array(y_train_all))
         else:
-            classif2 = self.create_keras_model(len(x_train_all[0]), int(self.args.enbedding_dimension/2))
+            classif2 = self.create_keras_model(len(x_train_all[0]), int(self.args.embedding_dimension / 2))
+            classif2 = self.keras_model_fit(classif2, x_train_all, y_train_all)
         for c in test_classes:
             dict_movie_edge = {}
             for edge in self.dict_test_true[c]:
@@ -636,7 +704,7 @@ class Classifier:
                     _, probs = self.predict_edge_classification(classif2, class_test)
                 else:
                     class_test = self.edges_embeddings(edges)
-                    probs = self.keras_model_predict(class_test)
+                    probs = self.keras_model_predict(classif2, class_test)
                 pred_index = np.argmax(probs.T[0])
                 # pred_index = np.argmax(class_test)
                 prediction = edges[pred_index]
@@ -671,8 +739,8 @@ class Classifier:
         # for i, k in enumerate(sorted(dict_class_movie_test, key=lambda x: len(dict_class_movie_test[x]), reverse=True)):
         #     classes[i] = k
         num_classes = len(classes)
-        seen_flag = np.zeros(int(self.args.seen_percentage*len(classes)))
-        unseen_flag = np.ones(len(classes)-int(self.args.seen_percentage*len(classes)))
+        seen_flag = np.zeros(int(self.args.seen_percentage * len(classes)))
+        unseen_flag = np.ones(len(classes) - int(self.args.seen_percentage * len(classes)))
         classes_flag = np.concatenate((seen_flag, unseen_flag))
         dict_measures = {'acc': {}, 'precision': {}}
         dict_class_measures = {}
@@ -704,11 +772,11 @@ class Classifier:
                 # prediction = edges[pred_index]
                 real_edge = list(dict_class_movie_test[c][m])
                 pred_true.append(c)
-                if i > int(self.args.seen_percentage*len(classes)):
+                if i > int(self.args.seen_percentage * len(classes)):
                     place = np.where(sort_classes == c)[0][0]
                     hist_real_unseen_pred[place] += 1
                 place = np.where(sort_classes_flag == 1)[0][0]
-                if self.args.unseen_weight_advantage*sort_norm[place] < sort_norm[0]:
+                if self.args.unseen_weight_advantage * sort_norm[place] < sort_norm[0]:
                     pred.append(sort_classes[place])
                 else:
                     pred.append(sort_classes[0])
@@ -738,20 +806,20 @@ class Classifier:
         y_label = 'Count'
         hist_plot(distances, title, x_label, y_label)
         plt.savefig(f'{self.args.dataset}/plots/hist_distance_real_unseen-prediction_'
-                    f'{self.embedding}_{self.args.norm}_{int(100*self.args.seen_percentage)}_seen_percent')
+                    f'{self.embedding}_{self.args.norm}_{int(100 * self.args.seen_percentage)}_seen_percent')
 
-    def confusion_matrix_maker(self, dict_class_measures, dict_class_movie_test,  pred, pred_true, split=None):
+    def confusion_matrix_maker(self, dict_class_measures, pred, pred_true):
         conf_matrix = confusion_matrix(pred_true, pred, labels=list(dict_class_measures.keys()))
-        if split is not None:
-            seen_classes = split['seen']
-            unseen_classes = split['unseen']
         seen_true_count = 0
+        binary_seen_true_count = 0
         seen_count = 0
         unseen_true_count = 0
+        binary_unseen_true_count = 0
         unseen_count = 0
+        seen_number = int(self.args.seen_percentage * len(conf_matrix))
+        classes = list(dict_class_measures.keys())
         seen_idx = []
         unseen_idx = []
-        classes = list(dict_class_movie_test.keys())
         for i, c in enumerate(classes):
             if len(set([c]).intersection(set(self.dict_unseen_edges.keys()))) > 0:
                 unseen_idx.append(i)
@@ -761,15 +829,18 @@ class Classifier:
             seen_true_count += conf_matrix[i][i]
             for j in range(len(classes)):
                 seen_count += conf_matrix[i][j]
+            for j in seen_idx:
+                binary_seen_true_count += conf_matrix[i][j]
         for i in unseen_idx:
             unseen_true_count += conf_matrix[i][i]
             for j in range(len(conf_matrix)):
                 unseen_count += conf_matrix[i][j]
-        # seen_number = int(self.args.seen_percentage * len(conf_matrix))
+            for j in unseen_idx:
+                binary_unseen_true_count += conf_matrix[i][j]
         # for i in range(len(conf_matrix))[:seen_number]:
         #     seen_true_count += conf_matrix[i][i]
         #     for j in range(len(conf_matrix)):
-        #         seen_count += conf_matrix[i][j]
+        #         seen_count += conf_matrix[i][j]k
         # for i in range(len(conf_matrix))[seen_number:]:
         #     unseen_true_count += conf_matrix[i][i]
         #     for j in range(len(conf_matrix)):
@@ -777,13 +848,21 @@ class Classifier:
         seen_accuracy = seen_true_count / seen_count
         unseen_accuracy = unseen_true_count / unseen_count
         harmonic_mean_ = harmonic_mean([seen_accuracy, unseen_accuracy])
-        binary_conf_matrix = np.array([[seen_true_count, seen_count - seen_true_count],
-                                       [unseen_count - unseen_true_count, unseen_true_count]])
-        binary_conf_matrix = normalize(binary_conf_matrix, norm="l1") # to add
-        print(f'accuracy all seen: {seen_accuracy}')
-        print(f'accuracy all unseen: {unseen_accuracy}')
-        print(f'Harmonic Mean all: {harmonic_mean_}')
-        return harmonic_mean_, seen_accuracy, unseen_accuracy, conf_matrix, binary_conf_matrix
+        s_o_acc = binary_seen_true_count / seen_count
+        u_o_acc = binary_unseen_true_count / unseen_count
+        measures = {"seen_accuracy": seen_accuracy, "unseen_accuracy": unseen_accuracy, "harmonic_mean": harmonic_mean_,
+                    "seen_only_accuracy": s_o_acc, "unseen_only_accuracy": u_o_acc, "seen_count": seen_count,
+                    "unseen_count": unseen_count}
+        # seen_unseen_conf_matrix = np.array([[seen_true_count, seen_count - seen_true_count],
+        #                                [unseen_count - unseen_true_count, unseen_true_count]])
+        binary_conf_matrix = np.array([[binary_seen_true_count, seen_count - binary_seen_true_count],
+                                       [unseen_count - binary_unseen_true_count, binary_unseen_true_count]])
+        binary_conf_matrix = normalize(binary_conf_matrix, norm="l1")  # to add
+        print(f"Total Seen Examples: {seen_count} || Total Unseen Examples: {unseen_count}")
+        print(
+            f'Seen Accuracy: {seen_accuracy} || Unseen Accuracy: {unseen_accuracy} || Harmonic Mean: {harmonic_mean_}')
+        print(f'Seen Only Accuracy: {s_o_acc} || Unseen Only Accuracy: {u_o_acc}')
+        return measures, conf_matrix, binary_conf_matrix
 
     def plot_confusion_matrix_all_classes(self, conf_matrix, binary_conf_matrix=None):
         title = f'Confusion Matrix, ZSL OUR_IMDB \n' \
@@ -800,7 +879,10 @@ def define_args(params):
     print(params)
     weights = np.array([params['weights_movie_movie'], params['weights_movie_class']]).astype(float)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default=params['dataset']) # our_imdb, awa2, cub, lad
+    parser.add_argument('--graph_percentage', default=0.15)
+
+    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str,
+                        default=params['dataset'])  # our_imdb, awa2, cub, lad
     parser.add_argument('--threshold', default=params['threshold'])
     parser.add_argument('--norm', default=params['norma_types'])  # cosine / L2 Norm / L1 Norm
     parser.add_argument('--embedding', default=params['embedding_type'])  # Node2Vec / Event2Vec / OGRE
@@ -810,11 +892,9 @@ def define_args(params):
     parser.add_argument('--seen_percentage', default=float(params['seen_percentage']))
     parser.add_argument('--embedding_dimension', default=int(params['embedding_dimensions']))
     parser.add_argument('--unseen_weight_advantage', default=0.9)
-    parser.add_argument('--graph_percentage', default=1)
     if params['dataset'] == 'awa2' or params['dataset'] == 'cub' or params['dataset'] == 'lad':
         parser.add_argument('--attributes_edges_weight', default=params['attributes_edges_weight'])
 
-        parser.add_argument('--images_nodes_percentage', default=1.0)
     # embedding_dimension = params[3].astype(int)
     args = parser.parse_args()
     return args, weights
@@ -829,66 +909,66 @@ def obj_func_grid(params, specific_split=True, split=None):
     np.random.seed(0)
     # ratio_arr = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     graph_maker = GraphImporter(args)
+    dict_val_edges = None
     # multi_graph = graph_maker.import_imdb_multi_graph(weights)
     if args.dataset == 'our_imdb':
         weighted_graph = graph_maker.import_imdb_weighted_graph(weights)
     elif args.dataset == 'awa2' or args.dataset == 'cub' or args.dataset == 'lad':
         awa2_att_weight = params['attributes_edges_weight']
-        weighted_graph, split = graph_maker.import_data_graph(weights, specific_split, awa2_att_weight)
+        weighted_graph, dict_val_edges, split = graph_maker.import_data_graph(weights, specific_split, awa2_att_weight)
     else:
         raise ValueError(f"Wrong name of DataSet, {args.dataset}")
-    edges_preparation = EdgesPreparation(weighted_graph, args, split)
-    # dict_true_edges = edges_preparation.label_edges_classes_ordered(edges_preparation.label_edges)
-    # dict_false_edges = edges_preparation.make_false_label_edges(dict_true_edges)
+    from graph_ZSL_generic import EdgesPreparation
+
+    edges_preparation = EdgesPreparation(weighted_graph, dict_val_edges, args, split)
     dict_train_true = edges_preparation.dict_train_edges
     dict_test_true = edges_preparation.dict_test_edges
     dict_train_false = edges_preparation.make_false_label_edges(dict_train_true)
     dict_unseen_edges = edges_preparation.dict_unseen_edges
     graph = edges_preparation.seen_graph()
-    embeddings_maker = EmbeddingCreator(graph, args.embedding_dimension, args)
-    if args.embedding == 'Node2Vec':
-        dict_embeddings = embeddings_maker.create_node2vec_embeddings()
-    elif args.embedding == 'Event2Vec':
-        dict_embeddings = embeddings_maker.create_event2vec_embeddings()
-    elif args.embedding == 'OGRE':
-        initial_nodes = edges_preparation.ogre_initial_nodes()
-        dict_embeddings = embeddings_maker.create_ogre_embeddings(user_initial_nodes_choice=initial_nodes)
-    else:
-        raise ValueError(f"Wrong name of embedding, {args.embedding}")
+
+    embeddings_maker = EmbeddingCreator(graph, args.embedding_dimension, args.dataset, args.embedding)
+    dict_embeddings = embeddings_maker.dict_embeddings
+
     classifier = Classifier(dict_train_true, dict_train_false, dict_test_true, dict_unseen_edges,
-                            dict_embeddings, args.embedding, args)
+                            dict_embeddings, args.embedding, args, linear_classifier=False)
     classif, dict_class_movie_test = classifier.train()
-    dict_class_measures_node2vec, pred, pred_true, hist_real_unseen_pred = classifier.evaluate_for_hist(classif, dict_class_movie_test)
+    # dict_class_measures_node2vec, pred, pred_true, hist_real_unseen_pred = classifier.evaluate_for_hist(classif,
+    #                                                                                                     dict_class_movie_test)
     # classifier.hist_plot_for_unseen_dist_eval(hist_real_unseen_pred)
-    _harmonic_mean, seen_accuracy, unseen_accuracy, conf_matrix, binary_conf_matrix = classifier.confusion_matrix_maker(
-        dict_class_measures_node2vec, dict_class_movie_test, pred, pred_true, split)
+    dict_class_measures_node2vec, pred, pred_true = classifier.evaluate(classif, dict_class_movie_test)
+
+    measures, conf_matrix, binary_conf_matrix = classifier.confusion_matrix_maker(dict_class_measures_node2vec,
+                                                                                  pred, pred_true)
     # classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix)
-    try:
-        values = pd.read_csv('our_imdb/train/grid_search.csv')
-        df1 = pd.DataFrame(np.column_stack((params.reshape(1, 8),
-                                            np.array([_harmonic_mean, seen_accuracy, unseen_accuracy]).reshape(1, 3))),
-                           columns=['movie_weights', 'labels_weights', 'embedding_type',
-                                    'embedding_dimension', 'norma_type', 'class_edges_threshold', 'seen_percentage',
-                                    'acc', 'seen_acc', 'unseen_acc', 'dataset'])
-        frames1 = [values, df1]
-        values = pd.concat(frames1, axis=0, names=['class_edges_threshold', 'movie_weights', 'labels_weights',
-                                                   'embedding_type',
-                                                   'embedding_dimension', 'norma_type', 'acc', 'seen_acc',
-                                                   'unseen_acc', 'dataset'], sort=False)
-    except:
-        values = pd.DataFrame(np.column_stack((params.reshape(1, 8),
-                                            np.array([_harmonic_mean, seen_accuracy, unseen_accuracy]).reshape(1, 3))),
-                              columns=['movie_weights', 'labels_weights', 'embedding_type',
-                                       'embedding_dimension', 'norma_type', 'class_edges_threshold', 'seen_percentage',
-                                       'acc', 'seen_acc', 'unseen_acc', 'dataset'])
-    values.to_csv('our_imdb/train/grid_search.csv', index=None)
-    return _harmonic_mean, seen_accuracy, unseen_accuracy
+    # try:
+    #     values = pd.read_csv('our_imdb/train/grid_search.csv')
+    #     df1 = pd.DataFrame(np.column_stack((params.reshape(1, 8),
+    #                                         np.array([measures["harmonic_mean"], measures["seen_accuracy"],
+    #                                                   measures["unseen_accuracy"]]).reshape(1, 3))),
+    #                        columns=['movie_weights', 'labels_weights', 'embedding_type',
+    #                                 'embedding_dimension', 'norma_type', 'class_edges_threshold', 'seen_percentage',
+    #                                 'acc', 'seen_acc', 'unseen_acc', 'dataset'])
+    #     frames1 = [values, df1]
+    #     values = pd.concat(frames1, axis=0, names=['class_edges_threshold', 'movie_weights', 'labels_weights',
+    #                                                'embedding_type',
+    #                                                'embedding_dimension', 'norma_type', 'acc', 'seen_acc',
+    #                                                'unseen_acc', 'dataset'], sort=False)
+    # except:
+    #     values = pd.DataFrame(np.column_stack((params.reshape(1, 8),
+    #                                            np.array([measures["harmonic_mean"], measures["seen_accuracy"],
+    #                                                      measures["unseen_accuracy"]]).reshape(1, 3))),
+    #                           columns=['movie_weights', 'labels_weights', 'embedding_type',
+    #                                    'embedding_dimension', 'norma_type', 'class_edges_threshold', 'seen_percentage',
+    #                                    'acc', 'seen_acc', 'unseen_acc', 'dataset'])
+    # values.to_csv('our_imdb/train/grid_search.csv', index=None)
+    return measures
 
 
 if __name__ == '__main__':
     seen_accuracies, unseen_accuracies = [], []
     parameters = {
-        "dataset": ['cub'],  # 'awa2', 'our_imdb'
+        "dataset": ['cub'],  # 'our_imdb', 'awa2', 'cub', 'lad'
         "embedding_type": ["Node2Vec"],
         "embedding_dimensions": [128],
         "weights_movie_class": [30],
@@ -911,13 +991,16 @@ if __name__ == '__main__':
                             for threshold in parameters["threshold"]:
                                 for per in parameters["seen_percentage"]:
                                     for att in parameters["attributes_edges_weight"]:
-                                        param = np.array([dataset, e_type, dim, w_m_c, w_m_m, norma_type, threshold, per, att])
+                                        param = np.array(
+                                            [dataset, e_type, dim, w_m_c, w_m_m, norma_type, threshold, per, att])
                                         dict_param = {p: param[i] for i, p in enumerate(list(parameters.keys()))}
                                         print(f'iteration number {num}')
                                         num += 1
-                                        acc, seen_acc, unseen_acc = obj_func_grid(dict_param)
-                                        seen_accuracies.append(seen_acc*100)
-                                        unseen_accuracies.append(unseen_acc*100)
+                                        measures = obj_func_grid(dict_param)
+                                        seen_acc = ["seen_accuracy"]
+                                        unseen_acc = ["unseen_accuracy"]
+                                        seen_accuracies.append(seen_acc * 100)
+                                        unseen_accuracies.append(unseen_acc * 100)
                                         # print("all accuracy: ", acc)
     dict_measures = {"unseen_accuracy": unseen_accuracies, "seen_accuracy": seen_accuracies}
     plots_2measures_vs_parameter(dict_measures, parameters["seen_percentage"], 'seen Percentage', parameters['dataset'],

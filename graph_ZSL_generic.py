@@ -1,7 +1,7 @@
 import json
 import multiprocessing
 from datetime import datetime
-
+from pathlib import Path
 from node2vec import Node2Vec
 import pandas as pd
 import numpy as np
@@ -27,6 +27,8 @@ from utlis_graph_zsl import hist_plot, plot_confusion_matrix, plots_2measures_vs
 from IMDb_data_preparation_E2V import MoviesGraph
 import torch
 from torch.backends import cudnn
+from gem.embedding.gf import GraphFactorization
+from gem.embedding.hope import HOPE
 
 seed = 0
 torch.manual_seed(seed)
@@ -69,6 +71,7 @@ class GraphImporter:
     """
     class that responsible to import or create the relevant graph
     """
+
     def __init__(self, args):
         self.dataset = args.dataset
         self.graph_percentage = args.graph_percentage
@@ -134,9 +137,11 @@ class GraphImporter:
         kg, dict_class_nodes_translation = final_graph_creator.imagenet_knowledge_graph()
         if self.args.dataset == "awa2":
             dict_class_name = final_graph_creator.dict_class_name
-            dict_val_edges = {img: dict_class_nodes_translation[dict_class_name[dict_val_edges[img]]] for img in list(dict_val_edges.keys())}
+            dict_val_edges = {img: dict_class_nodes_translation[dict_class_name[dict_val_edges[img]]] for img in
+                              list(dict_val_edges.keys())}
         else:
-            dict_val_edges = {img: dict_class_nodes_translation[dict_val_edges[img]] for img in list(dict_val_edges.keys())}
+            dict_val_edges = {img: dict_class_nodes_translation[dict_val_edges[img]] for img in
+                              list(dict_val_edges.keys())}
         kg = final_graph_creator.attributed_graph(kg, dict_class_nodes_translation, att_weight, radius)
         seen_classes, unseen_classes = final_graph_creator.seen_classes, final_graph_creator.unseen_classes
         seen_classes = [dict_class_nodes_translation[c] for c in seen_classes]
@@ -148,7 +153,6 @@ class GraphImporter:
         print("knowledge graph edges & nodes: ", len(kg.edges), "&", len(kg.nodes))
         print("labels graph edges & nodes: ", len(labels_graph.edges), "&", len(labels_graph.nodes))
         print("final graph edges & nodes: ", len(final_graph.edges), "&", len(final_graph.nodes))
-
 
         nx.write_gpickle(final_graph, f'{self.args.dataset}/train/{self.args.dataset}_graph')
         if specific_split:
@@ -209,11 +213,22 @@ class EmbeddingCreator(object):
     def create_ogre_embeddings(self, user_initial_nodes_choice=None):
         from StaticGraphEmbeddings.our_embeddings_methods.static_embeddings import StaticEmbeddings
         if user_initial_nodes_choice is not None:
-            static_embeddings = StaticEmbeddings(self.dataset, self.graph, initial_size=100, initial_method="node2vec", method="OGRE", H=user_initial_nodes_choice,
-                                                 dim=self.dim, choose="degrees", regu_val=0, weighted_reg=False, epsilon=0.1, file_tags=None)
+            static_embeddings = StaticEmbeddings(self.dataset, self.graph, initial_size=100, initial_method="node2vec",
+                                                 method="OGRE", H=user_initial_nodes_choice,
+                                                 dim=self.dim, choose="degrees", regu_val=0, weighted_reg=False,
+                                                 epsilon=0.1, file_tags=None)
         else:
             static_embeddings = StaticEmbeddings(self.dataset, self.graph, dim=self.dim)
         dict_embeddings = static_embeddings.dict_embedding
+        return dict_embeddings
+
+    def create_hope_embeddings(self):
+        hope = HOPE(d=128, beta=0.01)
+        x, _ = hope.learn_embedding(self.graph, is_weighted=True)
+        nodes = list(self.graph.nodes())
+        dict_embeddings = {}
+        for i in range(len(nodes)):
+            dict_embeddings[nodes[i]] = x[i]
         return dict_embeddings
 
 
@@ -224,20 +239,22 @@ class EdgesPreparation:
         self.split = split
         self.graph = graph
         self.label_edges = self.make_label_edges()
-        self.unseen_edges, self.test_edges, self.dict_test_edges, self.dict_train_edges, self.dict_unseen_edges \
+        self.unseen_edges, self.train_edges, self.test_edges, self.dict_test_edges, self.dict_train_edges, self.dict_unseen_edges \
             = self.train_test_unseen_split(dict_val_edges)
 
-    def make_label_edges(self):
+    def make_label_edges(self, graph=None):
         """
         Make a list with all the edge from type "labels_edges", i.e. edges between a movie and its class.
         :return: list with labels_edges
         """
+        if graph is None:
+            graph = self.graph
         data_path = self.args.dataset + '_true_edges.pickle'
-        nodes = list(self.graph.nodes)
+        nodes = list(graph.nodes)
         label_edges = []
         for node in nodes:
             if str(node)[0] == 'c':
-                info = self.graph._adj[node]
+                info = graph._adj[node]
                 neighs = list(info.keys())
                 for neigh in neighs:
                     if info[neigh]['key'] == 'labels_edges':
@@ -259,9 +276,11 @@ class EdgesPreparation:
         dict_class_label_edge = {}
         for edge in edge_data:
             if edge[0][0] == 'c':
-                label = edge[0]
-            else:
-                label = edge[1]
+                edge = [edge[1], edge[0]]
+            #     label = edge[0]
+            # else:
+            #     label = edge[1]
+            label = edge[1]
             if dict_class_label_edge.get(label) is not None:
                 edges = dict_class_label_edge[label]
                 edges.append(edge)
@@ -323,7 +342,7 @@ class EdgesPreparation:
         dict_unseen_edges = self.label_edges_classes_ordered(unseen_edges)
         # for c in unseen_classes:
         #     unseen_edges.append(dict_true_edges[c])
-        return unseen_edges, test_edges, dict_train_edges, dict_test_edges, dict_unseen_edges
+        return unseen_edges, train_edges, test_edges, dict_train_edges, dict_test_edges, dict_unseen_edges
 
     def seen_graph(self):
         graph = self.graph
@@ -344,6 +363,52 @@ class EdgesPreparation:
             #     continue
         intial_graph = gnx.subgraph(train_nodes)
         return intial_graph
+
+    def make_false_label_edges(self, dict_class_label_edge):
+        """
+        Make a dictionary of classes and false 'labels_edges' i.e. 'labels_edges' that do not exist.
+        The number of false 'labels_edges' for each class in the dictionary is false_per_true times the true
+        'labels_edges' of the class.
+        In addition, to be more balance the function take randomly false 'labels_edges' but the number of
+        false 'label_edges' corresponding to each class is similar.
+        # We need the false 'labels_edges' to be a false instances to the classifier.
+        :param dict_class_label_edge
+        :return: a dict of classes and their false labels_edges.
+        """
+        data_path = self.args.dataset + '_false_edges_balanced_{}.pickle'.format(self.args.false_per_true)
+        dict_class_false_edges = {}
+        labels = list(dict_class_label_edge.keys())
+        false_labels = []
+        for label in labels:
+            for edge in dict_class_label_edge[label]:
+                if edge[0][0] == 'c':
+                    edge = [edge[1], edge[0]]
+                #     label = edge[0]
+                #     movie = edge[1]
+                # else:
+                label = edge[1]
+                movie = edge[0]
+                if len(false_labels) < self.args.false_per_true + 1:
+                    false_labels = list(set(labels) - set([label]))  # The set makes every run different edges.
+                else:
+                    false_labels = list(set(false_labels) - set([label]))
+                indexes = random.sample(range(1, len(false_labels)), self.args.false_per_true)
+                # random.Random(4).shuffle(false_labels)
+                # false_labels = false_labels[:self.args.false_per_true + 1]
+                for i, index in enumerate(indexes):
+                    if dict_class_false_edges.get(label) is None:
+                        dict_class_false_edges[label] = [[movie, false_labels[index]]]
+                    else:
+                        edges = dict_class_false_edges[label]
+                        edges.append([movie, false_labels[index]])
+                        dict_class_false_edges[label] = edges
+                false_labels = list(np.delete(np.array(false_labels), indexes))
+        try:
+            with open(os.path.join(self.args.dataset, data_path), 'wb') as handle:
+                pickle.dump(dict_class_false_edges, handle, protocol=3)
+        except:
+            pass
+        return dict_class_false_edges
 
 
 class Classifier:
@@ -558,8 +623,8 @@ class Classifier:
             seen_num = len(seen_classes)
             unseen_num = len(unseen_classes)
         else:
-            seen_num = int(self.args.seen_percentage*len(classes))
-            unseen_num = len(classes)-int(self.args.seen_percentage*len(classes))
+            seen_num = int(self.args.seen_percentage * len(classes))
+            unseen_num = len(classes) - int(self.args.seen_percentage * len(classes))
         return seen_num, unseen_num
 
     def evaluate_for_hist(self, dict_class_movie_test):
@@ -616,7 +681,7 @@ class Classifier:
                     place = np.where(sort_classes == c)[0][0]
                     hist_real_unseen_pred[place] += 1
                 place = np.where(sort_classes_flag == 1)[0][0]
-                if self.args.unseen_weight_advantage*sort_norm[place] < sort_norm[0]:
+                if self.args.unseen_weight_advantage * sort_norm[place] < sort_norm[0]:
                     pred.append(sort_classes[place])
                 else:
                     pred.append(sort_classes[0])
@@ -646,7 +711,7 @@ class Classifier:
         y_label = 'Count'
         hist_plot(distances, title, x_label, y_label)
         plt.savefig(f'{self.args.dataset}/plots/hist_distance_real_unseen-prediction_'
-                    f'{self.embedding}_{self.args.norm}_{int(100*self.args.seen_percentage)}_seen_percent')
+                    f'{self.embedding}_{self.args.norm}_{int(100 * self.args.seen_percentage)}_seen_percent')
         plt.close()
 
     def confusion_matrix_maker(self, dict_class_measures, pred, pred_true):
@@ -698,9 +763,10 @@ class Classifier:
         #                                [unseen_count - unseen_true_count, unseen_true_count]])
         binary_conf_matrix = np.array([[binary_seen_true_count, seen_count - binary_seen_true_count],
                                        [unseen_count - binary_unseen_true_count, binary_unseen_true_count]])
-        binary_conf_matrix = normalize(binary_conf_matrix, norm="l1") # to add
+        binary_conf_matrix = normalize(binary_conf_matrix, norm="l1")  # to add
         print(f"Total Seen Examples: {seen_count} || Total Unseen Examples: {unseen_count}")
-        print(f'Seen Accuracy: {seen_accuracy} || Unseen Accuracy: {unseen_accuracy} || Harmonic Mean: {harmonic_mean_}')
+        print(
+            f'Seen Accuracy: {seen_accuracy} || Unseen Accuracy: {unseen_accuracy} || Harmonic Mean: {harmonic_mean_}')
         print(f'Seen Only Accuracy: {s_o_acc} || Unseen Only Accuracy: {u_o_acc}')
         return measures, conf_matrix, binary_conf_matrix
 
@@ -710,20 +776,22 @@ class Classifier:
         x_title = f"True Labels {int(100 * self.args.seen_percentage)}/{100 - int(100 * self.args.seen_percentage)}" \
                   f" (seen/unseen)"
         y_title = f"Predicted Labels"
-        save_path = f'{self.args.dataset}/plots/confusion_matrix_{self.embedding}_{self.args.norm}'\
+        save_path = f'{self.args.dataset}/plots/confusion_matrix_{self.embedding}_{self.args.norm}' \
                     f'_{int(100 * self.args.seen_percentage)}_seen_percent'
         # plot_confusion_matrix(conf_matrix, title, x_title, y_title, save_path)
         if binary_conf_matrix is not None:
             y_binary = "True Seen/Unseen"
             x_binary = "Predicted Seen/Unseen"
             binary_title = "Binary " + title
-            save_path_binary = f'{self.args.dataset}/plots/binary_confusion_matrix_{self.embedding}_{self.args.norm}'\
+            save_path_binary = f'{self.args.dataset}/plots/binary_confusion_matrix_{self.embedding}_{self.args.norm}' \
                                f'_{int(100 * self.args.seen_percentage)}_seen_percent'
             plot_confusion_matrix(binary_conf_matrix, binary_title, x_binary, y_binary, save_path_binary, vmax=None,
                                   vmin=None, cmap=None)
 
 
 from dataclasses import dataclass
+
+
 @dataclass
 class InventoryItem:
     """Class for keeping track of an item in inventory."""
@@ -739,8 +807,9 @@ def define_args(params):
     print(params)
     weights = np.array([params['weights_movie_movie'], params['weights_movie_class']]).astype(float)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--graph_percentage', default=0.05)
-    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default=params['dataset']) # our_imdb, awa2, cub, lad
+    parser.add_argument('--graph_percentage', default=0.3)
+    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str,
+                        default=params['dataset'])  # our_imdb, awa2, cub, lad
     parser.add_argument('--threshold', default=params['threshold'])
     parser.add_argument('--norm', default=params['norma_types'])  # cosine / L2 Norm / L1 Norm
     parser.add_argument('--embedding', default=params['embedding_type'])  # Node2Vec / Event2Vec / OGRE
@@ -749,13 +818,13 @@ def define_args(params):
     parser.add_argument('--ratio', default=[0.8])
     parser.add_argument('--seen_percentage', default=float(params['seen_percentage']))
     parser.add_argument('--embedding_dimension', default=int(params['embedding_dimensions']))
-    parser.add_argument('--unseen_weight_advantage', default=0.9)
+    parser.add_argument('--unseen_weight_advantage', default=params["unseen_advantage"])
     if params['dataset'] == 'awa2' or params['dataset'] == 'cub' or params['dataset'] == 'lad':
         parser.add_argument("--train_percentage", help="train percentage from the seen images", default=90)
 
         parser.add_argument('--attributes_edges_weight', default=params['attributes_edges_weight'])
 
-        parser.add_argument('--images_nodes_percentage', default=0.15)
+        parser.add_argument('--images_nodes_percentage', default=0.3)
     # embedding_dimension = params[3].astype(int)
     args = parser.parse_args()
     return args, weights
@@ -789,6 +858,8 @@ def obj_func_grid(params, specific_split=True, split=None):  # split False or Tr
     embeddings_maker = EmbeddingCreator(graph, args.embedding_dimension, args)
     if args.embedding == 'Node2Vec':
         dict_embeddings = embeddings_maker.create_node2vec_embeddings()
+    elif args.embedding == 'hope':
+        dict_embeddings = embeddings_maker.create_hope_embeddings()
     elif args.embedding == 'Event2Vec':
         dict_embeddings = embeddings_maker.create_event2vec_embeddings()
     elif args.embedding == 'OGRE':
@@ -799,7 +870,8 @@ def obj_func_grid(params, specific_split=True, split=None):  # split False or Tr
     classifier = Classifier(dict_train_true, dict_test_true, dict_unseen_edges,
                             dict_embeddings, args.embedding, split, args)
     dict_class_movie_test = classifier.train()
-    dict_class_measures_node2vec, pred, pred_true, hist_real_unseen_pred = classifier.evaluate_for_hist(dict_class_movie_test)
+    dict_class_measures_node2vec, pred, pred_true, hist_real_unseen_pred = classifier.evaluate_for_hist(
+        dict_class_movie_test)
     # classifier.hist_plot_for_unseen_dist_eval(hist_real_unseen_pred)
     measures, conf_matrix, binary_conf_matrix = classifier.confusion_matrix_maker(
         dict_class_measures_node2vec, pred, pred_true)
@@ -815,6 +887,7 @@ def flatten_dict(d):
                     yield key + "." + subkey, subvalue
             else:
                 yield key, value
+
     return dict(items())
 
 
@@ -823,7 +896,7 @@ def config_to_str(config):
     return [str(config.get(k, "--")) for k in HEADER]
 
 
-def run_grid(grid_params, res_dir, now):
+def run_grid(grid_params, res_dir, now, all_measures=None):
     grid_params = grid_params if type(grid_params) is dict else json.load(open(grid_params, "rt"))
     res_filename = os.path.join(res_dir, f"{grid_params['dataset'][0]}_grid_{now}.csv")
     out = open(res_filename, "wt")
@@ -840,7 +913,12 @@ def run_grid(grid_params, res_dir, now):
         table_row[HEADER.index('seen_count')] = str(measures["seen_count"])
         table_row[HEADER.index('unseen_count')] = str(measures["unseen_count"])
         out.write(f"{','.join(table_row)}\n")
+        if all_measures is None:
+            all_measures = {key: [measures[key]] for key in list(measures.keys())}
+        else:
+            [all_measures[key]. append(measures[key]) for key in list(measures.keys())]
     out.close()
+    return all_measures
 
 
 def main():
@@ -866,8 +944,8 @@ def main():
         print(f'iteration number {num}')
         num += 1
         harmonic_mean_, seen_acc, unseen_acc = obj_func_grid(dict_param)
-        seen_accuracies.append(seen_acc*100)
-        unseen_accuracies.append(unseen_acc*100)
+        seen_accuracies.append(seen_acc * 100)
+        unseen_accuracies.append(unseen_acc * 100)
         # print("all accuracy: ", acc)
     dict_measures = {"unseen_accuracy": unseen_accuracies, "seen_accuracy": seen_accuracies}
     plots_2measures_vs_parameter(dict_measures, parameters["seen_percentage"], 'seen Percentage', 'our_imdb',
@@ -894,7 +972,7 @@ if __name__ == '__main__':
     #     "attributes_edges_weight": [100]  # 100 is the best for now
     # }
     parameters = {
-        "dataset": ['awa2', 'our_imdb', 'cub', 'lad'],  # 'awa2', 'our_imdb', 'cub', 'lad'
+        "dataset": ['our_imdb', 'awa2', 'cub', 'lad'],  # 'our_imdb', 'awa2', 'cub', 'lad'
         "embedding_type": ["Node2Vec"],
         "embedding_dimensions": [128],
         "weights_movie_class": [30],
@@ -902,6 +980,8 @@ if __name__ == '__main__':
         "norma_types": ['cosine'],  # 'cosine', "L2 Norm", "L1 Norm"
         "threshold": [0.3],
         "seen_percentage": [0.8],
+        # "unseen_advantage": np.linspace(0, 1.0, 11),
+        "unseen_advantage": np.linspace(0.0, 0.1, 2),
         # "seen_percentage": np.linspace(0.1, 0.9, 9)
         "attributes_edges_weight": [100]  # 100 is the best for now
     }
@@ -911,13 +991,19 @@ if __name__ == '__main__':
         # for w_m_c in parameters["weights_movie_class"]:
         param_by_parameters = parameters.copy()
         param_by_parameters["dataset"] = [data]
-            # param_by_parameters["weights_movie_class"] = [w_m_c]
+        # param_by_parameters["weights_movie_class"] = [w_m_c]
         parameters_by_procesess.append(param_by_parameters)
     for i in range(len(parameters_by_procesess)):
-        # run_grid(parameters_by_procesess[i], res_dir, now)
-        proc = multiprocessing.Process(target=run_grid, args=(parameters_by_procesess[i], res_dir, now, ))
-        processes.append(proc)
-        proc.start()
-    for p in processes:
-        p.join()
+        all_measures = run_grid(parameters_by_procesess[i], res_dir, now)
+        plots_2measures_vs_parameter(all_measures, parameters["unseen_advantage"],
+                                     relevant_keys=["seen_only_accuracy", "unseen_only_accuracy"],
+                                     title=f"{parameters_by_procesess[i]['dataset'][0]} Dataset - Unseen Advantage Influence",
+                                     x_title="unseen advantage", y_title="accuracy",
+                                     path=Path(f"{parameters_by_procesess[i]['dataset'][0]}/plots/Unseen Advantage Influence.png"))
 
+
+    #     proc = multiprocessing.Process(target=run_grid, args=(parameters_by_procesess[i], res_dir, now, ))
+    #     processes.append(proc)
+    #     proc.start()
+    # for p in processes:
+    #     p.join()

@@ -31,7 +31,36 @@ def grid(dict_params):
     grid_combinations = product(*list(dict_params.values()))
     return list(grid_combinations)
 
-def plots_2measures_vs_parameter(dict_measures, parameter_arr, parameter_name, data_name, task, measure, norm, embedding):
+
+def plots_2measures_vs_parameter(dict_measures, x_axis, relevant_keys, title, x_title, y_title, path):
+    keys = list(dict_measures.keys())
+    # bottom = max([np.min(np.array([np.min(dict_measures[key]) for key in keys]))-10, 0])
+    # top = min([np.max(np.array([np.max(dict_measures[key]) for key in keys]))+10, 100])
+    plt.figure(figsize=(7, 6))
+    for j in range(len(keys)):
+        if relevant_keys[0] == keys[j]:
+            color = 'red'
+            marker = 'o'
+            markersize = 8
+            linestyle = 'solid'
+            y_axis = dict_measures[keys[j]]
+            plt.plot(x_axis, y_axis, marker=marker, linestyle=linestyle, markersize=markersize, color=color)
+        elif relevant_keys[1] == keys[j]:
+            color = 'green'
+            marker = 's'
+            markersize = 6
+            linestyle = 'solid'
+            y_axis = dict_measures[keys[j]]
+            plt.plot(x_axis, y_axis, marker=marker, linestyle=linestyle, markersize=markersize, color=color)
+    # plt.ylim(bottom=bottom, top=top)
+    plt.legend(relevant_keys, loc='best', ncol=3, fontsize='large')
+    plt.title(title)
+    plt.xlabel(x_title)
+    plt.ylabel(y_title)
+    plt.tight_layout()
+    plt.savefig(path)
+
+def old_plots_2measures_vs_parameter(dict_measures, parameter_arr, parameter_name, data_name, task, measure, norm, embedding):
     x_axis = np.array(parameter_arr)
     keys = list(dict_measures.keys())
     bottom = max([np.min(np.array([np.min(dict_measures[key]) for key in keys]))-10, 0])
@@ -58,7 +87,6 @@ def plots_2measures_vs_parameter(dict_measures, parameter_arr, parameter_name, d
     plt.ylabel("{} ({})".format(measure, norm))
     plt.tight_layout()
     plt.savefig(os.path.join(data_name, "plots", "{} {} {} {} {} with unseen advantage.png".format(data_name, task, measure, embedding, norm)))
-
 
 def hist_plot(y_array, title, x_title, y_title):
     # num_bins = np.where(y_array != 0)[0][-1]

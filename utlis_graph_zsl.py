@@ -18,17 +18,21 @@ random.seed(0)
 np.random.seed(0)
 
 
-
 @dataclass
 class C:
     a: float
     b: float
     c: float
 
-def grid(dict_params):
+
+def grid(dict_params, ignore_params=None):
     """ transforming continues space into discrete space by splitting every axis and then take the
         product of all the splits."""
-    grid_combinations = product(*list(dict_params.values()))
+    grid_dict_params = dict_params.copy()
+    if ignore_params is not None:
+        for key in ignore_params:
+            grid_dict_params.pop(key)
+    grid_combinations = product(*list(grid_dict_params.values()))
     return list(grid_combinations)
 
 
@@ -53,18 +57,21 @@ def plots_2measures_vs_parameter(dict_measures, x_axis, relevant_keys, title, x_
             y_axis = dict_measures[keys[j]]
             plt.plot(x_axis, y_axis, marker=marker, linestyle=linestyle, markersize=markersize, color=color)
     # plt.ylim(bottom=bottom, top=top)
-    plt.legend(relevant_keys, loc='best', ncol=3, fontsize='large')
+    plt.legend(relevant_keys, bbox_to_anchor=(0., 0.7, 1., .102), loc=3,
+               ncol=1)
     plt.title(title)
     plt.xlabel(x_title)
     plt.ylabel(y_title)
     plt.tight_layout()
     plt.savefig(path)
 
-def old_plots_2measures_vs_parameter(dict_measures, parameter_arr, parameter_name, data_name, task, measure, norm, embedding):
+
+def old_plots_2measures_vs_parameter(dict_measures, parameter_arr, parameter_name, data_name, task, measure, norm,
+                                     embedding):
     x_axis = np.array(parameter_arr)
     keys = list(dict_measures.keys())
-    bottom = max([np.min(np.array([np.min(dict_measures[key]) for key in keys]))-10, 0])
-    top = min([np.max(np.array([np.max(dict_measures[key]) for key in keys]))+10, 100])
+    bottom = max([np.min(np.array([np.min(dict_measures[key]) for key in keys])) - 10, 0])
+    top = min([np.max(np.array([np.max(dict_measures[key]) for key in keys])) + 10, 100])
     plt.figure(figsize=(7, 6))
     for j in range(len(keys)):
         if 'unseen_accuracy' in keys[j]:
@@ -86,7 +93,10 @@ def old_plots_2measures_vs_parameter(dict_measures, parameter_arr, parameter_nam
     plt.xlabel(parameter_name)
     plt.ylabel("{} ({})".format(measure, norm))
     plt.tight_layout()
-    plt.savefig(os.path.join(data_name, "plots", "{} {} {} {} {} with unseen advantage.png".format(data_name, task, measure, embedding, norm)))
+    plt.savefig(os.path.join(data_name, "plots",
+                             "{} {} {} {} {} with unseen advantage.png".format(data_name, task, measure, embedding,
+                                                                               norm)))
+
 
 def hist_plot(y_array, title, x_title, y_title):
     # num_bins = np.where(y_array != 0)[0][-1]
@@ -139,9 +149,9 @@ def classes_split(dataset, data_dir, split_dir):
         unseen_list_1 = unseen_lists["Unseen_List_1"][:-1].replace(" ", "").split(",")
         classes_file = open(os.path.join(data_dir, "label_list.txt"), encoding="utf8")
         classes = classes_file.readlines()
-        classes_translation = {**{c.split(", ")[0]: c.split(", ")[0].split("_")[1]+"_"+c.split(", ")[1]
-                                  for c in classes}, **{c.split(", ")[0].split("_")[1]+"_"
-                                                        +c.split(", ")[1]: c.split(", ")[0] for c in classes}}
+        classes_translation = {**{c.split(", ")[0]: c.split(", ")[0].split("_")[1] + "_" + c.split(", ")[1]
+                                  for c in classes}, **{c.split(", ")[0].split("_")[1] + "_"
+                                                        + c.split(", ")[1]: c.split(", ")[0] for c in classes}}
         unseen_classes = np.array([classes_translation[c] for c in unseen_list_1])
         seen_classes = np.setdiff1d(get_classes(images_dir), unseen_classes)
     else:

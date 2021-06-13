@@ -65,7 +65,22 @@ HEADER = ['weights_movie_movie',
           'unseen_only_acc',
           'seen_count',
           'unseen_count']
-
+# HEADER = ['dataset',
+#           'graph_percentage',
+#           'embedding_dim',
+#           'label_edges_weight',
+#           'instance_edges_weight',
+#           'threshold',
+#           'seen_percentage',
+#           'data_name',
+#           'awa2_attributes_weight',
+#           'harmonic_mean',
+#           'seen_acc',
+#           'unseen_acc',
+#           'seen_only_acc',
+#           'unseen_only_acc',
+#           'seen_count',
+#           'unseen_count']
 
 class GraphImporter:
     """
@@ -627,7 +642,7 @@ class Classifier:
             unseen_num = len(classes) - int(self.args.seen_percentage * len(classes))
         return seen_num, unseen_num
 
-    def evaluate_for_hist(self, dict_class_movie_test):
+    def evaluate_for_hist(self, dict_class_movie_test, advantage=1.0):
         # evaluate
         classes = list(dict_class_movie_test.keys())
         # for i, k in enumerate(sorted(dict_class_movie_test, key=lambda x: len(dict_class_movie_test[x]), reverse=True)):
@@ -681,7 +696,7 @@ class Classifier:
                     place = np.where(sort_classes == c)[0][0]
                     hist_real_unseen_pred[place] += 1
                 place = np.where(sort_classes_flag == 1)[0][0]
-                if self.args.unseen_weight_advantage * sort_norm[place] < sort_norm[0]:
+                if advantage * sort_norm[place] < sort_norm[0]:
                     pred.append(sort_classes[place])
                 else:
                     pred.append(sort_classes[0])
@@ -818,7 +833,7 @@ def define_args(params):
     parser.add_argument('--ratio', default=[0.8])
     parser.add_argument('--seen_percentage', default=float(params['seen_percentage']))
     parser.add_argument('--embedding_dimension', default=int(params['embedding_dimensions']))
-    parser.add_argument('--unseen_weight_advantage', default=params["unseen_advantage"])
+    parser.add_argument('--seen_weight_advantage', default=params["seen_advantage"])
     if params['dataset'] == 'awa2' or params['dataset'] == 'cub' or params['dataset'] == 'lad':
         parser.add_argument("--train_percentage", help="train percentage from the seen images", default=90)
 
@@ -830,7 +845,7 @@ def define_args(params):
     return args, weights
 
 
-def obj_func_grid(params, specific_split=True, split=None):  # split False or True
+def obj_func_grid(params, file=None, specific_split=True, split=None):  # split False or True
     """
     Main Function for link prediction task.
     :return:
@@ -870,13 +885,24 @@ def obj_func_grid(params, specific_split=True, split=None):  # split False or Tr
     classifier = Classifier(dict_train_true, dict_test_true, dict_unseen_edges,
                             dict_embeddings, args.embedding, split, args)
     dict_class_movie_test = classifier.train()
-    dict_class_measures_node2vec, pred, pred_true, hist_real_unseen_pred = classifier.evaluate_for_hist(
-        dict_class_movie_test)
-    # classifier.hist_plot_for_unseen_dist_eval(hist_real_unseen_pred)
-    measures, conf_matrix, binary_conf_matrix = classifier.confusion_matrix_maker(
-        dict_class_measures_node2vec, pred, pred_true)
-    classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix)
-    return measures
+    all_measures = None
+    for advantage in args.seen_weight_advantage:
+        dict_class_measures_node2vec, pred, pred_true, hist_real_unseen_pred = classifier.evaluate_for_hist(
+            dict_class_movie_test, advantage=advantage)
+        # classifier.hist_plot_for_unseen_dist_eval(hist_real_unseen_pred)
+        measures, conf_matrix, binary_conf_matrix = classifier.confusion_matrix_maker(
+            dict_class_measures_node2vec, pred, pred_true)
+        table_params = params.copy()
+        table_params["seen_advantage"] = advantage
+        table_row = config_to_str(table_params)
+        if file is not None:
+            update_results(file, table_row, measures)
+        if all_measures is None:
+            all_measures = {key: [measures[key]] for key in list(measures.keys())}
+        else:
+            [all_measures[key].append(measures[key]) for key in list(measures.keys())]
+        # classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix)
+    return all_measures
 
 
 def flatten_dict(d):
@@ -896,29 +922,32 @@ def config_to_str(config):
     return [str(config.get(k, "--")) for k in HEADER]
 
 
-def run_grid(grid_params, res_dir, now, all_measures=None):
+def run_grid(grid_params, res_dir, now, all_measures=None, ignore_params: list = None):
     grid_params = grid_params if type(grid_params) is dict else json.load(open(grid_params, "rt"))
     res_filename = os.path.join(res_dir, f"{grid_params['dataset'][0]}_grid_{now}.csv")
     out = open(res_filename, "wt")
     out.write(f"{','.join(HEADER)}\n")
-    for config in grid(grid_params):
-        param = {p: config[i] for i, p in enumerate(list(grid_params.keys()))}
-        measures = obj_func_grid(param)
-        table_row = config_to_str(param)
-        table_row[HEADER.index('harmonic_mean')] = str(measures["harmonic_mean"])
-        table_row[HEADER.index('seen_acc')] = str(measures["seen_accuracy"])
-        table_row[HEADER.index('unseen_acc')] = str(measures["unseen_accuracy"])
-        table_row[HEADER.index('seen_only_acc')] = str(measures["seen_only_accuracy"])
-        table_row[HEADER.index('unseen_only_acc')] = str(measures["unseen_only_accuracy"])
-        table_row[HEADER.index('seen_count')] = str(measures["seen_count"])
-        table_row[HEADER.index('unseen_count')] = str(measures["unseen_count"])
-        out.write(f"{','.join(table_row)}\n")
-        if all_measures is None:
-            all_measures = {key: [measures[key]] for key in list(measures.keys())}
-        else:
-            [all_measures[key]. append(measures[key]) for key in list(measures.keys())]
+    for config in grid(grid_params, ignore_params=ignore_params):
+        config_keys = list(grid_params.keys())
+        config_keys.remove(ignore_params[0])
+        param = {p: config[i] for i, p in enumerate(config_keys)}
+        if ignore_params is not None:
+            for p in ignore_params:
+                param[p] = grid_params[p]
+        all_measures = obj_func_grid(param, out)
     out.close()
     return all_measures
+
+
+def update_results(file, table_row, measures):
+    table_row[HEADER.index('harmonic_mean')] = str(measures["harmonic_mean"])
+    table_row[HEADER.index('seen_acc')] = str(measures["seen_accuracy"])
+    table_row[HEADER.index('unseen_acc')] = str(measures["unseen_accuracy"])
+    table_row[HEADER.index('seen_only_acc')] = str(measures["seen_only_accuracy"])
+    table_row[HEADER.index('unseen_only_acc')] = str(measures["unseen_only_accuracy"])
+    table_row[HEADER.index('seen_count')] = str(measures["seen_count"])
+    table_row[HEADER.index('unseen_count')] = str(measures["unseen_count"])
+    file.write(f"{','.join(table_row)}\n")
 
 
 def main():
@@ -980,8 +1009,8 @@ if __name__ == '__main__':
         "norma_types": ['cosine'],  # 'cosine', "L2 Norm", "L1 Norm"
         "threshold": [0.3],
         "seen_percentage": [0.8],
-        # "unseen_advantage": np.linspace(0, 1.0, 11),
-        "unseen_advantage": np.linspace(0.0, 0.1, 2),
+        "seen_advantage": np.linspace(0, 1.0, 11),
+        # "seen_advantage": np.linspace(0.0, 0.1, 2),
         # "seen_percentage": np.linspace(0.1, 0.9, 9)
         "attributes_edges_weight": [100]  # 100 is the best for now
     }
@@ -994,13 +1023,13 @@ if __name__ == '__main__':
         # param_by_parameters["weights_movie_class"] = [w_m_c]
         parameters_by_procesess.append(param_by_parameters)
     for i in range(len(parameters_by_procesess)):
-        all_measures = run_grid(parameters_by_procesess[i], res_dir, now)
-        plots_2measures_vs_parameter(all_measures, parameters["unseen_advantage"],
+        all_measures = run_grid(parameters_by_procesess[i], res_dir, now, ignore_params=["seen_advantage"])
+        plots_2measures_vs_parameter(all_measures, parameters["seen_advantage"],
                                      relevant_keys=["seen_only_accuracy", "unseen_only_accuracy"],
-                                     title=f"{parameters_by_procesess[i]['dataset'][0]} Dataset - Unseen Advantage Influence",
-                                     x_title="unseen advantage", y_title="accuracy",
-                                     path=Path(f"{parameters_by_procesess[i]['dataset'][0]}/plots/Unseen Advantage Influence.png"))
-
+                                     title=f"{parameters_by_procesess[i]['dataset'][0]} Dataset - Seen Advantage Influence",
+                                     x_title="seen advantage", y_title="accuracy",
+                                     path=Path(
+                                         f"{parameters_by_procesess[i]['dataset'][0]}/plots/Unseen Advantage Influence.png"))
 
     #     proc = multiprocessing.Process(target=run_grid, args=(parameters_by_procesess[i], res_dir, now, ))
     #     processes.append(proc)

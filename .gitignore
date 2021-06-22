@@ -20,6 +20,10 @@ grid_results/
 cub/
 lad/
 save_data_graph/
+OGRE/
+StaticGraphEmbeddings1/
+
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

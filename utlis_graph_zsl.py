@@ -132,7 +132,7 @@ def get_classes(images_dir):
     return np.array(os.listdir(images_dir))
 
 
-def classes_split(dataset, data_dir, split_dir):
+def classes_split(dataset, data_dir, split_dir, return_translation=False):
     images_dir = os.path.join(data_dir, "images")
     if dataset == "awa2":
         awa2_split = json.load(open(split_dir, 'r'))
@@ -143,6 +143,9 @@ def classes_split(dataset, data_dir, split_dir):
         classes = get_classes(images_dir)
         seen_classes = classes[train_test_split['train_cid'] - 1][0]
         unseen_classes = classes[train_test_split['test_cid'] - 1][0]
+        classes_translation = {c[:3]: c for c in classes}
+        if return_translation:
+            return seen_classes, unseen_classes, classes_translation
     elif dataset == "lad":
         split_file = open(split_dir, "r")
         unseen_lists = {l.split(":")[0]: l.split(":")[1] for l in split_file.readlines()}
@@ -154,9 +157,25 @@ def classes_split(dataset, data_dir, split_dir):
                                                         + c.split(", ")[1]: c.split(", ")[0] for c in classes}}
         unseen_classes = np.array([classes_translation[c] for c in unseen_list_1])
         seen_classes = np.setdiff1d(get_classes(images_dir), unseen_classes)
+        if return_translation:
+            return seen_classes, unseen_classes, classes_translation
     else:
         raise ValueError("Wrong dataset name: replace with cub/lad/awa2")
     return seen_classes, unseen_classes
+
+
+def calculate_weighted_jaccard_distance(vectors, vector, r=None, k=None):
+    weighted_jd = 1 - np.sum(np.minimum(vectors, vector), axis=1) / np.sum(np.maximum(vectors, vector), axis=1)
+    if r is not None:
+        neighbors_indices = np.where(weighted_jd < r)[0]
+    elif k is not None:
+        neighbors_indices = np.argpartition(weighted_jd, k)[:k]
+    else:
+        raise ValueError("'r' and 'k' arguments can not be both None")
+    distances = np.array([weighted_jd[i] for i in neighbors_indices])
+    return neighbors_indices, distances
+
+
 
 # def obj_func(weights):
 #     """

@@ -87,10 +87,11 @@ class DrawUnseenGraph:
         df['int_labels'] = labels
         df['labels'] = df['int_labels'].apply(lambda i: labels_translate[i])
         df['node kind'] = df['int_labels'].apply(lambda i: style_translate[i])
-        return df, labels_translate
+        return df, labels_translate, style_translate
 
     def draw_graph(self):
-        data, label_translate = self._prepare_data()
+        data, label_translate, style_translate = self._prepare_data()
+        style_order = list(style_translate.values())[0], list(style_translate.values())[-1]
         data = data.sort_values("x node embedding")
         plt.figure(figsize=(16, 10))
         plt.title(f"{self.kind} visualization, {self.dataset} dataset - {self.args.embedding} embedding")
@@ -100,7 +101,8 @@ class DrawUnseenGraph:
             style="node kind",
             palette=['green', 'orange', 'blue', 'dodgerblue', 'red'],
             data=data,
-            hue_order=label_translate.values())
+            hue_order=label_translate.values(),
+            style_order=style_order)
         base_path = Path(f"{self.dataset}/unseen_plots/{self.args.embedding}")
         if self.args.embedding == "OGRE":
             visualization_path = base_path.joinpath(f"unseen_graph_{self.kind}_visualization_type={self.args.embedding}"

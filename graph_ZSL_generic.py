@@ -29,8 +29,7 @@ import torch
 from torch.backends import cudnn
 from gem.embedding.gf import GraphFactorization
 from gem.embedding.hope import HOPE
-from  draw_unseen_graph import DrawUnseenGraph
-
+from draw_unseen_graph import DrawUnseenGraph
 
 seed = 0
 torch.manual_seed(seed)
@@ -68,12 +67,13 @@ random.seed(seed)
 #           'seen_count',
 #           'unseen_count']
 HEADER = ['dataset',
-          'embedding',
+          'embedding_type',
           'graph_percentage',
           'embedding_dimension',
           'ogre_second_neighbor_advantage',
           'label_edges_weight',
           'instance_edges_weight',
+          'attributes_edges_weight',
           'kg_jaccard_similarity_threshold(imdb)',
           'seen_percentage(imdb)',
           'link_prediction_type',
@@ -147,7 +147,7 @@ class GraphImporter:
                 graph.add_edge(items[0], items[1], key=str(sort_att[0]) + str(sort_att[1]))
         return graph
 
-    def import_data_graph(self, final_graph_weights, specific_split, att_weight):
+    def import_data_graph(self, final_graph_weights, specific_split, att_weight, gephi_display=False):
         from images_graph_creator_all import FinalGraphCreator, ImagesEmbeddings, define_graph_args
         weights_dict = {'classes_edges': final_graph_weights[0], 'labels_edges': final_graph_weights[1]}
         dict_paths, radius = define_graph_args(self.args.dataset)
@@ -174,6 +174,14 @@ class GraphImporter:
         seen_classes, unseen_classes = final_graph_creator.seen_classes, final_graph_creator.unseen_classes
         seen_classes = [dict_class_nodes_translation[c] for c in seen_classes]
         unseen_classes = [dict_class_nodes_translation[c] for c in unseen_classes]
+        if gephi_display:
+            from kg2gephi import KG2Gephi
+            kg2gephi = KG2Gephi(kg, seen_classes, unseen_classes)
+            edges_path = Path(f"{self.args.dataset}/plots/gephi/kg_jaccard_edges.csv")
+            edges_path.parent.mkdir(parents=True, exist_ok=True)
+            nodes_path = Path(f"{self.args.dataset}/plots/gephi/kg_jaccard_nodes.csv")
+            nodes_path.parent.mkdir(parents=True, exist_ok=True)
+            kg2gephi.extract_kg_csv(edges_path=edges_path, nodes_path=nodes_path, nodes_translate=dict_class_nodes_translation)
         split = {'seen': seen_classes, 'unseen': unseen_classes}
         labels_graph = final_graph_creator.create_labels_graph(dict_class_nodes_translation)
         final_graph = final_graph_creator.weighted_graph(image_graph, kg, labels_graph, weights_dict)
@@ -836,6 +844,7 @@ class Classifier:
             plot_confusion_matrix(unseen_conf_matrix, unseen_title, x_unseen, y_unseen, save_path_unseen, vmax=None,
                                   vmin=None)
 
+
 from dataclasses import dataclass
 
 
@@ -909,7 +918,8 @@ def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True)
         weighted_graph = graph_maker.import_imdb_weighted_graph(weights)
     elif args.dataset == 'awa2' or args.dataset == 'cub' or args.dataset == 'lad':
         awa2_att_weight = params['attributes_edges_weight']
-        weighted_graph, dict_val_edges, split = graph_maker.import_data_graph(weights, specific_split, awa2_att_weight)
+        weighted_graph, dict_val_edges, split = graph_maker.import_data_graph(weights, specific_split, awa2_att_weight,
+                                                                              gephi_display=True)
     else:
         raise ValueError(f"Wrong name of DataSet, {args.dataset}")
     edges_preparation = EdgesPreparation(weighted_graph, dict_val_edges, args, split)
@@ -933,9 +943,11 @@ def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True)
     else:
         raise ValueError(f"Wrong name of embedding, {args.embedding}")
     if draw:
-        draw_unseen_graph = DrawUnseenGraph(dict_embeddings, dict_train_true, dict_test_true, dict_unseen_edges, kind="tsne", dataset=args.dataset, args=args)
+        draw_unseen_graph = DrawUnseenGraph(dict_embeddings, dict_train_true, dict_test_true, dict_unseen_edges,
+                                            kind="tsne", dataset=args.dataset, args=args)
         draw_unseen_graph.draw_graph()
-        draw_unseen_graph = DrawUnseenGraph(dict_embeddings, dict_train_true, dict_test_true, dict_unseen_edges, kind="pca", dataset=args.dataset, args=args)
+        draw_unseen_graph = DrawUnseenGraph(dict_embeddings, dict_train_true, dict_test_true, dict_unseen_edges,
+                                            kind="pca", dataset=args.dataset, args=args)
         draw_unseen_graph.draw_graph()
     classifier = Classifier(dict_train_true, dict_test_true, dict_unseen_edges,
                             dict_embeddings, args.embedding, split, args)
@@ -956,7 +968,7 @@ def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True)
             all_measures = {key: [measures[key]] for key in list(measures.keys())}
         else:
             [all_measures[key].append(measures[key]) for key in list(measures.keys())]
-        classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix, unseen_conf_matrix)
+        # classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix, unseen_conf_matrix)
     return all_measures
 
 
@@ -1044,7 +1056,7 @@ def main():
 if __name__ == '__main__':
     res_dir = "C:\\Users\\kfirs\\lab\\Zero Shot Learning\\New-Graph-ZSL\\grid_results"
     # now = datetime.now().strftime("%d%m%y_%H%M%S")
-    now = "20_06_21"
+    now = "30_06_21"
     # parameters = {
     #     "dataset": ['our_imdb'],  # 'awa2', 'our_imdb'
     #     "embedding_type": ["Node2Vec"],
@@ -1060,22 +1072,25 @@ if __name__ == '__main__':
     #     "attributes_edges_weight": [100]  # 100 is the best for now
     # }
     parameters = {
-        "dataset": ['our_imdb'],  # 'our_imdb', 'awa2', 'cub', 'lad'
-        "embedding_type": ["OGRE"],
+        "dataset": ['cub', 'lad'],  # 'our_imdb', 'awa2', 'cub', 'lad'
+        "embedding_type": ["Node2Vec"],
         "embedding_dimension": [128],  # 128
-        "label_edges_weight": [30],  # 30
-        "instance_edges_weight": [1],  # 1
+        # "label_edges_weight": [30],  # 30
+        # "instance_edges_weight": [1],  # 1
+        "label_edges_weight": np.logspace(0, 2, 3).astype(int),
+        "instance_edges_weight": np.logspace(0, 2, 3).astype(int),
         "norm_type": ['cosine'],  # 'cosine', "L2 Norm", "L1 Norm"
         "kg_jacard_similarity_threshold": [0.3],
         "seen_percentage": [0.8],
         # "seen_advantage": np.linspace(0, 1.0, 11),
         "seen_advantage": [0.7],
         # "seen_percentage": np.linspace(0.1, 0.9, 9)
-        "attributes_edges_weight": [100],  # 100 is the best for now
+        # "attributes_edges_weight": [100],  # 100 is the best for now
+        "attributes_edges_weight": np.logspace(0, 2, 3).astype(int),  # 100 is the best for now
         "link_prediction_type": ["norm_argmin"]
     }
     if "OGRE" in parameters["embedding_type"]:
-        parameters.update({"ogre_second_neighbor_advantage": [0.1, 0.001, 0.]})  # 0.1
+        parameters.update({"ogre_second_neighbor_advantage": [0.1]})  # 0.1
     processes = []
     parameters_by_procesess = []
     for data in parameters["dataset"]:
@@ -1085,7 +1100,8 @@ if __name__ == '__main__':
         # param_by_parameters["label_edges_weight"] = [w_m_c]
         parameters_by_procesess.append(param_by_parameters)
     for i in range(len(parameters_by_procesess)):
-        all_measures = run_grid(parameters_by_procesess[i], res_dir, now, ignore_params=["seen_advantage"])
+        all_measures = run_grid(parameters_by_procesess[i], res_dir, now, ignore_params=["seen_advantage"],
+                                add_to_exist_file=True)
         # plots_2measures_vs_parameter(all_measures, parameters["seen_advantage"],
         #                              relevant_keys=["seen_only_accuracy", "unseen_only_accuracy"],
         #                              title=f"{parameters_by_procesess[i]['dataset'][0]} Dataset - Seen Advantage Influence",

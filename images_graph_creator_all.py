@@ -11,6 +11,9 @@ from itertools import chain
 import networkx as nx
 import random
 from tqdm import tqdm
+import pandas as pd
+from pathlib import Path
+from utlis_graph_zsl import calculate_weighted_jaccard_distance
 
 import torch
 from torch.utils.data import DataLoader
@@ -146,6 +149,7 @@ class ImagesEmbeddings:
         im_names = np.array([item.replace("\\", "/").split('/')[-1].split('.')[0] for item in im_paths])
         return embed_matrix, im_names, classes
 
+
 class FinalGraphCreator:
     def __init__(self, paths, _embed_matrix, _dict_image_embed,
                  _dict_idx_image_class, images_nodes_percentage, _args):
@@ -156,7 +160,13 @@ class FinalGraphCreator:
         self.image_graph_path = osp.join("save_data_graph", self.args.dataset, "image_graph.gpickle")
         self.pre_knowledge_graph_path = paths["pre_knowledge_graph_path"]
         self.knowledge_graph_path = osp.join("save_data_graph", self.args.dataset, "knowledge_graph.gpickle")
-        self.seen_classes, self.unseen_classes = classes_split(self.args.dataset, self.data_path, self.split_path)
+        if self.args.dataset == "lad" or self.args.dataset == "cub":
+            self.seen_classes, self.unseen_classes, self.classes_translate = classes_split(self.args.dataset,
+                                                                                           self.data_path,
+                                                                                           self.split_path,
+                                                                                           return_translation=True)
+        else:
+            self.seen_classes, self.unseen_classes = classes_split(self.args.dataset, self.data_path, self.split_path)
         if self.args.dataset == "awa2":
             self.dict_name_class, self.dict_class_name = self.classes_names_translation()
             self.seen_classes = [self.dict_class_name[item] for item in self.seen_classes]
@@ -250,11 +260,15 @@ class FinalGraphCreator:
             all_attributes = open(self.attributes_path, "r")
             all_attributes = all_attributes.readlines()
             all_attributes = np.array([attribute.strip().split(" ") for attribute in all_attributes]).astype(float)
+            classes_attributes = list(self.classes_translate.values())
         elif self.args.dataset == "lad":
-            all_attributes = open(self.attributes_path, "r")
-            all_attributes = all_attributes.readlines()
+            raw_attributes = open(self.attributes_path, "r")
+            raw_attributes = raw_attributes.readlines()
             all_attributes = np.array([attribute.strip().split(", ")[1].split("  ")[1:-1] for
-                                       attribute in all_attributes]).astype(float)
+                                       attribute in raw_attributes]).astype(float)
+            attribute_classes_order = np.array([attribute.strip().split(", ")[0].split("  ") for
+                                                attribute in raw_attributes])
+            classes_attributes = [self.classes_translate[c[0]] for c in attribute_classes_order]
         else:
             raise ValueError("Wrong dataset name: replace with awa2/cub/lad")
         dict_class_nodes = {node: i for i, node in enumerate(self.nodes)}
@@ -266,23 +280,80 @@ class FinalGraphCreator:
         _dict_class_nodes_translation = {**dict_class_nodes, **dict_nodes_class}
         s_u_classes = [*self.seen_classes, *self.unseen_classes]
         s_u_idx = [_dict_class_nodes_translation[c] for c in s_u_classes]
-        kd_idx_to_class_idx = {i: _dict_class_nodes_translation[c] for i, c in enumerate(s_u_idx)}
+        seen_idx = set([_dict_class_nodes_translation[c] for c in self.seen_classes])
+        unseen_idx = set([_dict_class_nodes_translation[c] for c in self.unseen_classes])
+        kd_idx_to_class = {i: _dict_class_nodes_translation[c] for i, c in enumerate(s_u_idx)}
+        if self.args.dataset == "lad" or self.args.dataset == "cub":
+            kd_idx_to_class_idx = {i: _dict_class_nodes_translation[c] for i, c in enumerate(classes_attributes)}
+            kd_idx_to_class = {i: _dict_class_nodes_translation[kd_idx_to_class_idx[i]] for i in
+                               list(kd_idx_to_class.keys())}
+            unseen_idx.update(seen_idx)
+            seen_idx = set(
+                [idx for idx in list(seen_idx) + list(unseen_idx) if kd_idx_to_class_idx[idx] < len(seen_idx)])
+            unseen_idx -= seen_idx
+        else:
+            kd_idx_to_class_idx = None
         attributes = np.array([all_attributes[idx] for idx in s_u_idx])
         attributes = normalize(attributes, norm='l2', axis=1)
-        return kd_idx_to_class_idx, attributes
+        return kd_idx_to_class_idx, kd_idx_to_class, seen_idx, unseen_idx, attributes
 
-    def attributed_graph(self, final_kg, _dict_class_nodes_translation, att_weight, _radius):
-        kd_idx_to_class_idx, attributes = self._attributes()
-        kdt = KDTree(attributes, leaf_size=10)
+    @staticmethod
+    def _display_kg_nodes(current_classes_nodes_df, index, class_name, class_attribute, class_kind):
+        current_classes_nodes_df.loc[index] = [class_name, class_kind, class_attribute]
+        index += 1
+        return current_classes_nodes_df, index
+
+    def attributed_graph(self, final_kg, _dict_class_nodes_translation, att_weight, _radius, jaccard=True):
+        kd_idx_to_class_idx, kd_idx_to_class, seen_idx, unseen_idx, attributes = self._attributes()
+        kdt = KDTree(attributes, leaf_size=10) if not jaccard else None
         # image_graph.add_nodes_from(np.arange(len(self.embeddings)))
         count = 0
+        index = 0
+        classes_nodes_df = pd.DataFrame(columns=["class", "class kind", "attribute"])
         for i in range(len(attributes)):
-            neighbors, distances = kdt.query_radius(attributes[i:i + 1], r=_radius["classes_radius"],
-                                                    return_distance=True)
-            if len(neighbors[0]) == 1:
-                distances, neighbors = kdt.query(attributes[i:i + 1], k=2,
-                                                 return_distance=True)
-            neighbors, distances = neighbors[0], distances[0]
+            if jaccard:
+                neighbors, distances = calculate_weighted_jaccard_distance(attributes, attributes[i:i + 1],
+                                                                           r=0.5)
+            else:
+                neighbors, distances = kdt.query_radius(attributes[i:i + 1], r=_radius["classes_radius"],
+                                                        return_distance=True)
+                neighbors, distances = neighbors[0], distances[0]
+            if i in unseen_idx:
+                classes_nodes_df, index = self._display_kg_nodes(classes_nodes_df, index, kd_idx_to_class[i],
+                                                                 attributes[i:i + 1][0], "unseen class")
+                k = max(len(neighbors) + 2, len(unseen_idx) + 2)
+
+                if jaccard:
+                    _neighbors, _distances = calculate_weighted_jaccard_distance(attributes, attributes[i:i + 1],
+                                                                                 k=k)
+                else:
+                    _distances, _neighbors = kdt.query(attributes[i:i + 1], k=k, return_distance=True)
+                    _distances, _neighbors = _distances[0], _neighbors[0]
+                dict_neigh_dist = dict(zip(_neighbors, _distances))
+                sorted_neigh_dist = dict(sorted(dict_neigh_dist.items(), key=lambda item: item[1]))
+                sorted_relevant_seen_neighs = list(sorted_neigh_dist.keys())
+                neighbors = set(neighbors).intersection(seen_idx)
+                num_seen_neighbors = len(neighbors)
+                if num_seen_neighbors < 3:
+                    seen_neighs = set(sorted_relevant_seen_neighs).intersection(seen_idx)
+                    dict_seen_neigh_dist = {seen_neigh: sorted_neigh_dist[seen_neigh] for seen_neigh in seen_neighs}
+                    dict_seen_neigh_dist = dict(sorted(dict_seen_neigh_dist.items(), key=lambda item: item[1]))
+                    seen_neighs = list(dict_seen_neigh_dist.keys())
+                    neighbors.update(seen_neighs[:2])
+                neighbors = list(neighbors)
+                distances = [sorted_neigh_dist[neigh] for neigh in neighbors]
+            elif len(neighbors) == 1:
+                if jaccard:
+                    neighbors, distances = calculate_weighted_jaccard_distance(attributes, attributes[i:i + 1], k=2)
+                else:
+                    distances, neighbors = kdt.query(attributes[i:i + 1], k=2,
+                                                     return_distance=True)
+                classes_nodes_df, index = self._display_kg_nodes(classes_nodes_df, index, kd_idx_to_class[i],
+                                                                 attributes[i:i + 1][0], "seen class")
+            else:
+                classes_nodes_df, index = self._display_kg_nodes(classes_nodes_df, index, kd_idx_to_class[i],
+                                                                 attributes[i:i + 1][0], "seen class")
+
             loop_ind = np.where(distances == 0)
             if len(loop_ind[0]) > 1:
                 loop_ind = np.where(neighbors == i)
@@ -297,13 +368,16 @@ class FinalGraphCreator:
             mean = count / (i + 1)
             if i % 10 == 0:
                 print('Progress:', i, '/', len(attributes), ';  Current Mean:', mean)  # 37273
-            neighbors_translation = [_dict_class_nodes_translation[kd_idx_to_class_idx[neighbor]] for neighbor in
+            neighbors_translation = [_dict_class_nodes_translation[kd_idx_to_class[neighbor]] for neighbor in
                                      neighbors]
-            weight_edges = list(zip(np.repeat(_dict_class_nodes_translation[kd_idx_to_class_idx[i]], len(neighbors)),
+            weight_edges = list(zip(np.repeat(_dict_class_nodes_translation[kd_idx_to_class[i]], len(neighbors)),
                                     neighbors_translation, edges_weights))
             final_kg.add_weighted_edges_from(weight_edges)
             # TODO: add the weight from the attributes to the pre graph and not replace them
-            #  (minor problem because it is sparse graph)
+            #  (minor problem because it is sparse graph)z
+        classes_nodes_df_path = Path(f"{self.args.dataset}/plots/gephi/kg_classes_kind_and_attributes.csv", index=False)
+        classes_nodes_df_path.parent.mkdir(parents=True, exist_ok=True)
+        classes_nodes_df.to_csv(classes_nodes_df_path, index=False)
         if self.args.dataset == "awa2":
             largest_cc = max(nx.connected_components(final_kg), key=len)
             final_kg = final_kg.subgraph(largest_cc).copy()
@@ -321,7 +395,8 @@ class FinalGraphCreator:
     def create_labels_graph(self, _dict_class_nodes_translation):
         labels_graph = nx.Graph()
         if self.args.dataset == "awa2":
-            edges = np.array([(key, _dict_class_nodes_translation[self.dict_class_name[self.dict_idx_image_class[key]]])  # dict_class_nodes_translation ?
+            edges = np.array([(key, _dict_class_nodes_translation[self.dict_class_name[self.dict_idx_image_class[key]]])
+                              # dict_class_nodes_translation ?
                               for key in list(self.dict_idx_image_class.keys())]).astype(str)
         elif self.args.dataset == "cub" or self.args.dataset == "lad":
             edges = np.array([(key, _dict_class_nodes_translation[self.dict_idx_image_class[key]])
@@ -394,8 +469,8 @@ def define_graph_args(dataset_name):
     else:
         raise ValueError("Wrong dataset name: replace with awa2/cub/lad")
     _dict_paths = {"data_path": _data_path, "split_path": _split_path, "save_path": _chkpt_path,
-                  "model_path": _model_path, "attributes_path": _attributes_path,
-                  "pre_knowledge_graph_path": _pre_knowledge_graph_path}
+                   "model_path": _model_path, "attributes_path": _attributes_path,
+                   "pre_knowledge_graph_path": _pre_knowledge_graph_path}
     return _dict_paths, _radius
 
 
@@ -416,10 +491,10 @@ if __name__ == '__main__':
     dict_paths, radius = define_graph_args(args.dataset)
     graph_preparation = ImagesEmbeddings(dict_paths, args)
     embeds_matrix, dict_image_embed, dict_image_class, val_images = graph_preparation.images_embed_calculator()
-    dict_idx_image_class = {i: "c"+dict_image_class[image]
+    dict_idx_image_class = {i: "c" + dict_image_class[image]
                             for i, image in enumerate(list(dict_image_class.keys()))}
     final_graph_creator = FinalGraphCreator(dict_paths, embeds_matrix, dict_image_embed,
-                                          dict_idx_image_class, args.images_nodes_percentage, args)
+                                            dict_idx_image_class, args.images_nodes_percentage, args)
     image_graph = final_graph_creator.create_image_graph(radius)
     kg, dict_class_nodes_translation = final_graph_creator.imagenet_knowledge_graph()
     att_weight = 10
@@ -436,4 +511,3 @@ if __name__ == '__main__':
     print("knowledge graph edges & nodes: ", len(kg.edges), "&", len(kg.nodes))
     print("labels graph edges & nodes: ", len(labels_graph.edges), "&", len(labels_graph.nodes))
     print("final graph edges & nodes: ", len(final_graph.edges), "&", len(final_graph.nodes))
-

@@ -163,7 +163,7 @@ class GraphImporter:
                                                 dict_idx_image_class, self.args.images_nodes_percentage, self.args)
         image_graph = final_graph_creator.create_image_graph(radius)
         kg, dict_class_nodes_translation = final_graph_creator.imagenet_knowledge_graph()
-        if self.args.dataset == "awa2":
+        if self.args.dataset == "awa2_w_imagenet":
             dict_class_name = final_graph_creator.dict_class_name
             dict_val_edges = {img: dict_class_nodes_translation[dict_class_name[dict_val_edges[img]]] for img in
                               list(dict_val_edges.keys())}
@@ -176,12 +176,18 @@ class GraphImporter:
         unseen_classes = [dict_class_nodes_translation[c] for c in unseen_classes]
         if gephi_display:
             from kg2gephi import KG2Gephi
-            kg2gephi = KG2Gephi(kg, seen_classes, unseen_classes)
+            relevant_kg = kg.subgraph(set(chain(seen_classes, unseen_classes))).copy()
+            if self.args.dataset == "awa2_w_imagenet":
+                nodes_translate = {node: final_graph_creator.dict_name_class[dict_class_nodes_translation[node]] for
+                                   node in list(relevant_kg.nodes())}
+            else:
+                nodes_translate = dict_class_nodes_translation
+            kg2gephi = KG2Gephi(relevant_kg, seen_classes, unseen_classes)
             edges_path = Path(f"{self.args.dataset}/plots/gephi/kg_jaccard_edges.csv")
             edges_path.parent.mkdir(parents=True, exist_ok=True)
             nodes_path = Path(f"{self.args.dataset}/plots/gephi/kg_jaccard_nodes.csv")
             nodes_path.parent.mkdir(parents=True, exist_ok=True)
-            kg2gephi.extract_kg_csv(edges_path=edges_path, nodes_path=nodes_path, nodes_translate=dict_class_nodes_translation)
+            kg2gephi.extract_kg_csv(edges_path=edges_path, nodes_path=nodes_path, nodes_translate=nodes_translate)
         split = {'seen': seen_classes, 'unseen': unseen_classes}
         labels_graph = final_graph_creator.create_labels_graph(dict_class_nodes_translation)
         final_graph = final_graph_creator.weighted_graph(image_graph, kg, labels_graph, weights_dict)
@@ -527,6 +533,12 @@ class Classifier:
             raise ValueError(f"Wrong name of norm, {self.norm}")
         return norm
 
+    def edges_embeddings(self, edges):
+        embed_edges_0 = [self.dict_projections[edge[0]] for edge in edges]
+        embed_edges_1 = [self.dict_projections[edge[1]] for edge in edges]
+        embeddings = np.array([[*edge0, *edge1] for edge0, edge1 in zip(embed_edges_0, embed_edges_1)])
+        return embeddings
+
     def calculate_classifier_value(self, true_edges, false_edges):
         """
         Create x and y for Logistic Regression Classifier.
@@ -538,8 +550,12 @@ class Classifier:
                 y_true_edge/y_false_edge - The edges labels, [1,0] for true/ [0,1] for false.
                 Also the edge of the label is concatenate to the label.
         """
-        x_true = self.edges_distance(true_edges)
-        x_false = self.edges_distance(false_edges)
+        if self.args.link_prediction_type == "norm_linear_regression":
+            x_true = self.edges_distance(true_edges)
+            x_false = self.edges_distance(false_edges)
+        else:
+            x_true = self.edges_embeddings(true_edges)
+            x_false = self.edges_embeddings(false_edges)
         # x_true, x_false = np.array(norms_true).reshape(-1, 1), np.array(norms_false).reshape(-1, 1)
         y_true_edge = np.column_stack((np.ones(shape=(len(true_edges), 1)),
                                        np.zeros(shape=(len(true_edges), 1)))).astype(int)
@@ -615,6 +631,67 @@ class Classifier:
             pickle.dump(dict_class_movie_test, fid)
         return dict_class_movie_test
 
+    def ml_train(self, dict_false_edges):
+        path2 = os.path.join(self.args.dataset, f'train/dict_{self.embedding}_{self.args.norm}.pkl')
+        classes = list(self.dict_true_edges.keys())
+        # for i, k in enumerate(sorted(self.dict_true_edges, key=lambda x: len(self.dict_true_edges[x]), reverse=True)):
+        #     classes[i] = k
+        dict_class_movie_test = {}
+        x_train_all, y_train_all = np.array([]), np.array([])
+        train_classes = list(self.dict_true_edges.keys())
+        test_classes = list(self.dict_test_true.keys())
+        unseen_classes = list(self.dict_unseen_edges.keys())
+        classif2 = None
+        for c in train_classes:
+            x_true, x_false, y_true_edge, y_false_edge = \
+                self.calculate_classifier_value(self.dict_true_edges[c], dict_false_edges[c])
+            x_train, y_train = self.concat_data(x_true, x_false, y_true_edge, y_false_edge)
+            if len(x_train_all) > 0:
+                x_train_all = np.concatenate((x_train_all, x_train), axis=0)
+                y_train_all = np.concatenate((y_train_all, y_train), axis=0)
+            else:
+                x_train_all = x_train
+                y_train_all = y_train
+        shuff = np.c_[x_train_all.reshape(len(x_train_all), -1), y_train_all.reshape(len(y_train_all), -1)]
+        # random.Random(4).shuffle(shuff)
+        np.random.shuffle(shuff)
+        # if self.linear_classifier:
+        #     x_train_all = shuff.T[0].reshape(-1, 1)
+        #     y_train_all = np.array([shuff.T[1].reshape(-1, 1), shuff.T[2].reshape(-1, 1)]).T.reshape(-1, 2).astype(
+        #         int)
+        x_train_all = shuff[:, :-2]
+        y_train_all = shuff[:, -2:].astype(int)
+        if self.args.link_prediction_type == "norm_linear_regression":
+            from link_prediction_models import train_edge_classification
+            classif2 = train_edge_classification(np.array(x_train_all), np.array(y_train_all))
+        elif self.args.link_prediction_type == "embedding_neural_network":
+            from link_prediction_models import create_keras_model, keras_model_fit
+            classif2 = create_keras_model(len(x_train_all[0]), int(self.args.embedding_dimension / 2))
+            classif2 = keras_model_fit(classif2, x_train_all, y_train_all)
+        for c in test_classes:
+            dict_movie_edge = {}
+            for edge in self.dict_test_true[c]:
+                if edge[0][0] == 'c':
+                    movie = edge[1]
+                else:
+                    movie = edge[0]
+                dict_movie_edge[movie] = edge
+            dict_class_movie_test[c] = dict_movie_edge.copy()
+        for c in unseen_classes:
+            dict_movie_edge = {}
+            for edge in self.dict_unseen_edges[c]:
+                if edge[0][0] == 'c':
+                    movie = edge[1]
+                else:
+                    movie = edge[0]
+                dict_movie_edge[movie] = edge
+            dict_class_movie_test[c] = dict_movie_edge.copy()
+        # if not os.path.exists(os.path.join('Graph-ZSL', self.args.dataset)):
+        #     os.makedirs(os.path.join('Graph-ZSL', self.args.dataset))
+        with open(path2, 'wb') as fid:
+            pickle.dump(dict_class_movie_test, fid)
+        return dict_class_movie_test, classif2
+
     def evaluate(self, dict_class_movie_test):
         # evaluate
         classes = list(dict_class_movie_test.keys())
@@ -673,8 +750,10 @@ class Classifier:
             unseen_num = len(classes) - int(self.args.seen_percentage * len(classes))
         return seen_num, unseen_num
 
-    def evaluate_for_hist(self, dict_class_movie_test, advantage=1.0):
+    def evaluate_for_hist(self, dict_class_movie_test, advantage=1.0, classif=None):
         # evaluate
+        advantage1 = advantage if self.args.link_prediction_type == "norm_argmin" else 1.0
+        advantage2 = 1.0 if self.args.link_prediction_type == "norm_argmin" else advantage
         classes = list(dict_class_movie_test.keys())
         # for i, k in enumerate(sorted(dict_class_movie_test, key=lambda x: len(dict_class_movie_test[x]), reverse=True)):
         #     classes[i] = k
@@ -699,7 +778,17 @@ class Classifier:
                 edges = np.array([np.repeat(m, num_classes), classes]).T
                 class_test = np.zeros(shape=(len(edges), 1))
                 # if set(self.args.embedding) != set('OGRE'):
-                class_test = self.edges_distance(edges)
+                # class_test = self.edges_distance(edges)
+                if self.args.link_prediction_type == "norm_argmin":
+                    class_test = self.edges_distance(edges)
+                elif self.args.link_prediction_type == "norm_linear_regression":
+                    from link_prediction_models import predict_edge_classification
+                    class_test = self.edges_distance(edges)
+                    probs = -predict_edge_classification(classif, class_test)[1].T[0]
+                elif self.args.link_prediction_type == "embedding_neural_network":
+                    from link_prediction_models import keras_model_predict
+                    embed_test = self.edges_embeddings(edges)
+                    probs = -keras_model_predict(classif, embed_test)
                 # else:
                 #     for j, edge in enumerate(edges):
                 #         norm = self.edge_distance(edge)
@@ -707,10 +796,14 @@ class Classifier:
                 # _, probs = self.predict_edge_classification(classif2, class_test)
                 # pred_index = np.argmax(probs.T[0])
                 try:
-                    class_norm_test = np.column_stack((np.column_stack((class_test, classes)), classes_flag))
+                    if self.args.link_prediction_type == "norm_argmin":
+                        class_norm_test = np.column_stack((np.column_stack((class_test, classes)), classes_flag))
+                    else:
+                        class_norm_test = np.column_stack((np.column_stack((probs, classes)), classes_flag))
                 except:
                     print('a')
-                sorted_class_norm = class_norm_test[np.argsort(class_norm_test[:, 0])]
+                new_order = np.argsort(class_norm_test[:, 0].astype(float))
+                sorted_class_norm = class_norm_test[new_order]
                 # if set(self.args.norm) == set('cosine'):
                 #     sorted_class_norm = np.flip(sorted_class_norm)
                 #     sort_classes = sorted_class_norm.T[0]
@@ -719,7 +812,14 @@ class Classifier:
                 sort_norm = sorted_class_norm.T[0].astype(float)
                 sort_classes_flag = sorted_class_norm.T[2].astype(float)
                 # class_test[::-1].sort(axis=0)
-                prediction = np.array([m, sort_classes[0]])
+                # if self.args.link_prediction_type == "norm_argmin":
+                #     c_pred = sort_classes[0]
+                # elif self.args.link_prediction_type == "norm_linear_regression"\
+                #         or self.args.link_prediction_type == "embedding_neural_network":
+                #     pred_index = np.argmax(probs.T[0])
+                #     c_pred = edges[pred_index][1]
+                c_pred = sort_classes[0]
+                prediction = np.array([m, c_pred])
                 # prediction = edges[pred_index]
                 real_edge = list(dict_class_movie_test[c][m])
                 pred_true.append(c)
@@ -727,7 +827,7 @@ class Classifier:
                     place = np.where(sort_classes == c)[0][0]
                     hist_real_unseen_pred[place] += 1
                 place = np.where(sort_classes_flag == 1)[0][0]
-                if advantage * sort_norm[place] < sort_norm[0]:
+                if advantage1 * sort_norm[place] < advantage2 * sort_norm[0]:
                     pred.append(sort_classes[place])
                 else:
                     pred.append(sort_classes[0])
@@ -819,28 +919,30 @@ class Classifier:
         return measures, conf_matrix, binary_conf_matrix, unseen_conf_matrix
 
     def plot_confusion_matrix_all_classes(self, conf_matrix, binary_conf_matrix=None, unseen_conf_matrix=None):
-        title = f'Confusion Matrix, ZSL {self.args.dataset} \n' \
-                f'{self.embedding} {self.args.norm} {int(100 * self.args.seen_percentage)} Percent Seen'
-        x_title = f"True Labels {int(100 * self.args.seen_percentage)}/{100 - int(100 * self.args.seen_percentage)}" \
-                  f" (seen/unseen)"
-        y_title = f"Predicted Labels"
-        save_path = f'{self.args.dataset}/plots/confusion_matrix_{self.embedding}_{self.args.norm}' \
-                    f'_{int(100 * self.args.seen_percentage)}_seen_percent'
-        plot_confusion_matrix(conf_matrix, title, x_title, y_title, save_path)
+        # title = f'Confusion Matrix, ZSL {self.args.dataset} \n' \
+        #         f'{self.embedding} {self.args.norm} {int(100 * self.args.seen_percentage)} Percent Seen'
+        # x_title = f"True Labels {int(100 * self.args.seen_percentage)}/{100 - int(100 * self.args.seen_percentage)}" \
+        #           f" (seen/unseen)"
+        x_title = "True Labels"
+        y_title = "Predicted Labels"
+        save_path = f'{self.args.dataset}/plots/confusion_matrix_{self.embedding}_{self.args.link_prediction_type}_{self.args.norm}'
+        title = None
+        conf_matrix = normalize(conf_matrix)
+        plot_confusion_matrix(conf_matrix, title, x_title, y_title, save_path, vmax=None, vmin=None)
         if binary_conf_matrix is not None:
             y_binary = "True Seen/Unseen"
             x_binary = "Predicted Seen/Unseen"
-            binary_title = "Binary " + title
-            save_path_binary = f'{self.args.dataset}/plots/binary_confusion_matrix_{self.embedding}_{self.args.norm}' \
-                               f'_{int(100 * self.args.seen_percentage)}_seen_percent'
+            # binary_title = "Binary " + title
+            binary_title = None
+            save_path_binary = f'{self.args.dataset}/plots/binary_confusion_matrix_{self.embedding}_{self.args.link_prediction_type}_{self.args.norm}'
             plot_confusion_matrix(binary_conf_matrix, binary_title, x_binary, y_binary, save_path_binary, vmax=None,
                                   vmin=None, cmap=None)
         if unseen_conf_matrix is not None:
             y_unseen = "True Seen/Unseen"
             x_unseen = "Predicted Seen/Unseen"
-            unseen_title = "Unseen " + title
-            save_path_unseen = f'{self.args.dataset}/plots/unseen_confusion_matrix_{self.embedding}_{self.args.norm}' \
-                               f'_{int(100 * self.args.seen_percentage)}_seen_percent'
+            # unseen_title = "Unseen " + title
+            unseen_title = None
+            save_path_unseen = f'{self.args.dataset}/plots/unseen_confusion_matrix_{self.embedding}_{self.args.link_prediction_type}_{self.args.norm}'
             plot_confusion_matrix(unseen_conf_matrix, unseen_title, x_unseen, y_unseen, save_path_unseen, vmax=None,
                                   vmin=None)
 
@@ -865,7 +967,7 @@ def define_args(params):
     parser = argparse.ArgumentParser()
     parser.add_argument('--instance_edges_weight', default=params['instance_edges_weight'])
     parser.add_argument('--label_edges_weight', default=params['label_edges_weight'])
-    parser.add_argument('--graph_percentage', default=0.3)
+    parser.add_argument('--graph_percentage', default=0.14)
     parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str,
                         default=params['dataset'])  # our_imdb, awa2, cub, lad
     parser.add_argument('--kg_jacard_similarity_threshold', default=params['kg_jacard_similarity_threshold'])
@@ -885,7 +987,7 @@ def define_args(params):
 
         parser.add_argument('--attributes_edges_weight', default=params['attributes_edges_weight'])
 
-        parser.add_argument('--images_nodes_percentage', default=0.3)
+        parser.add_argument('--images_nodes_percentage', default=0.14)
     # embedding_dimension = params[3].astype(int)
     args = parser.parse_args()
     params["graph_percentage"] = args.graph_percentage
@@ -903,7 +1005,7 @@ def define_args(params):
     return args, weights, params
 
 
-def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True):  # split False or True
+def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True, classif=None):  # split False or True
     """
     Main Function for link prediction task.
     :return:
@@ -928,6 +1030,8 @@ def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True)
     dict_train_true = edges_preparation.dict_train_edges
     dict_test_true = edges_preparation.dict_test_edges
     dict_unseen_edges = edges_preparation.dict_unseen_edges
+    if args.link_prediction_type == "embedding_neural_network" or args.link_prediction_type == "norm_linear_regression":
+        dict_train_false = edges_preparation.make_false_label_edges(dict_train_true)
     graph = edges_preparation.seen_graph()
     embeddings_maker = EmbeddingCreator(graph, args.embedding_dimension, args)
     if args.embedding == 'Node2Vec':
@@ -951,12 +1055,20 @@ def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True)
         draw_unseen_graph.draw_graph()
     classifier = Classifier(dict_train_true, dict_test_true, dict_unseen_edges,
                             dict_embeddings, args.embedding, split, args)
-    dict_class_movie_test = classifier.train()
+    if args.link_prediction_type == "norm_argmin":
+        dict_class_movie_test = classifier.train()
+    else:
+        dict_class_movie_test, classif = classifier.ml_train(dict_train_false)
+        from graph_ZSL_new import MLClassifier
+        classifier1 = MLClassifier(dict_train_true, dict_train_false, dict_test_true, dict_unseen_edges,
+                                  dict_embeddings, args.embedding, args, linear_classifier=False)
+        # classif, dict_class_movie_test = classifier1.train()
     all_measures = None
     for advantage in args.seen_weight_advantage:
+        # dict_class_measures_node2vec, pred, pred_true = classifier1.evaluate(classif, dict_class_movie_test)
         dict_class_measures_node2vec, pred, pred_true, hist_real_unseen_pred = classifier.evaluate_for_hist(
-            dict_class_movie_test, advantage=advantage)
-        # classifier.hist_plot_for_unseen_dist_eval(hist_real_unseen_pred)
+            dict_class_movie_test, advantage=advantage, classif=classif)
+        # # classifier.hist_plot_for_unseen_dist_eval(hist_real_unseen_pred)
         measures, conf_matrix, binary_conf_matrix, unseen_conf_matrix = classifier.confusion_matrix_maker(
             dict_class_measures_node2vec, pred, pred_true)
         table_params = params.copy()
@@ -968,7 +1080,7 @@ def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True)
             all_measures = {key: [measures[key]] for key in list(measures.keys())}
         else:
             [all_measures[key].append(measures[key]) for key in list(measures.keys())]
-        # classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix, unseen_conf_matrix)
+        classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix, unseen_conf_matrix)
     return all_measures
 
 
@@ -1072,25 +1184,27 @@ if __name__ == '__main__':
     #     "attributes_edges_weight": [100]  # 100 is the best for now
     # }
     parameters = {
-        "dataset": ['cub', 'lad'],  # 'our_imdb', 'awa2', 'cub', 'lad'
-        "embedding_type": ["Node2Vec"],
+        "dataset": ['cub'],  # 'our_imdb', 'awa2', 'cub', 'lad'
+        "embedding_type": ["Node2Vec"],  # "Node2Vec", "OGRE", "hope"
         "embedding_dimension": [128],  # 128
-        # "label_edges_weight": [30],  # 30
-        # "instance_edges_weight": [1],  # 1
-        "label_edges_weight": np.logspace(0, 2, 3).astype(int),
-        "instance_edges_weight": np.logspace(0, 2, 3).astype(int),
+        "label_edges_weight": [100],  # 30
+        "instance_edges_weight": [100],  # 1
+        # "label_edges_weight": np.logspace(0, 2, 3).astype(int),
+        # "instance_edges_weight": np.logspace(0, 2, 3).astype(int),
         "norm_type": ['cosine'],  # 'cosine', "L2 Norm", "L1 Norm"
         "kg_jacard_similarity_threshold": [0.3],
         "seen_percentage": [0.8],
         # "seen_advantage": np.linspace(0, 1.0, 11),
         "seen_advantage": [0.7],
         # "seen_percentage": np.linspace(0.1, 0.9, 9)
-        # "attributes_edges_weight": [100],  # 100 is the best for now
-        "attributes_edges_weight": np.logspace(0, 2, 3).astype(int),  # 100 is the best for now
-        "link_prediction_type": ["norm_argmin"]
+        "attributes_edges_weight": [1],  # 100 is the best for now
+        # "attributes_edges_weight": np.logspace(0, 2, 3).astype(int),  # 100 is the best for now
+        "link_prediction_type": ["norm_linear_regression"]  # "norm_argmin", "norm_linear_regression", "embedding_neural_network"
     }
     if "OGRE" in parameters["embedding_type"]:
-        parameters.update({"ogre_second_neighbor_advantage": [0.1]})  # 0.1
+        parameters.update({"ogre_second_neighbor_advantage": [0.01]})  # 0.1
+    if "embedding_neural_network" in parameters["link_prediction_type"] or "norm_linear_regression" in parameters["link_prediction_type"]:
+        from graph_ZSL_new import obj_func_grid as obj
     processes = []
     parameters_by_procesess = []
     for data in parameters["dataset"]:

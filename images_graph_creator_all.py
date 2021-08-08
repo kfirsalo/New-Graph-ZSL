@@ -167,7 +167,7 @@ class FinalGraphCreator:
                                                                                            return_translation=True)
         else:
             self.seen_classes, self.unseen_classes = classes_split(self.args.dataset, self.data_path, self.split_path)
-        if self.args.dataset == "awa2":
+        if self.args.dataset == "awa2_w_imagenet":
             self.dict_name_class, self.dict_class_name = self.classes_names_translation()
             self.seen_classes = [self.dict_class_name[item] for item in self.seen_classes]
             self.unseen_classes = [self.dict_class_name[item] for item in self.unseen_classes]
@@ -234,7 +234,7 @@ class FinalGraphCreator:
         return _dict_class_nodes_translation
 
     def imagenet_knowledge_graph(self):
-        if self.args.dataset == "awa2":
+        if self.args.dataset == "awa2_w_imagenet":
             graph = json.load(open(self.pre_knowledge_graph_path, 'r'))
             edges = graph['edges']
             self.nodes = graph['wnids']
@@ -244,7 +244,7 @@ class FinalGraphCreator:
             edges = [('c' + str(x[0]), 'c' + str(x[1])) for x in edges]
             kg_imagenet = nx.Graph()
             kg_imagenet.add_edges_from(edges)
-        elif self.args.dataset == "cub" or self.args.dataset == "lad":
+        elif self.args.dataset == "cub" or self.args.dataset == "lad" or self.args.dataset == "awa2":
             self.nodes = [*self.seen_classes, *self.unseen_classes]
             kg_imagenet = nx.Graph()
         else:
@@ -253,9 +253,16 @@ class FinalGraphCreator:
         return kg_imagenet, _dict_class_nodes_translation
 
     def _attributes(self):
-        if self.args.dataset == "awa2":
+        if self.args.dataset == "awa2_w_imagenet":
             graph = json.load(open(self.pre_knowledge_graph_path, 'r'))
             all_attributes = graph['vectors']
+        elif self.args.dataset == "awa2":
+            all_attributes = open("ZSL _DataSets/awa2/Animals_with_Attributes2/predicate-matrix-binary.txt", 'r')
+            all_attributes = all_attributes.readlines()
+            all_attributes = np.array([attribute.strip('\n').split(' ') for attribute in all_attributes]).astype(float)
+            classes = open("ZSL _DataSets/awa2/Animals_with_Attributes2/classes.txt", 'r')
+            classes = classes.readlines()
+            classes_attributes = np.array([c.strip().split("\t")[1] for c in classes])
         elif self.args.dataset == "cub":
             all_attributes = open(self.attributes_path, "r")
             all_attributes = all_attributes.readlines()
@@ -283,7 +290,7 @@ class FinalGraphCreator:
         seen_idx = set([_dict_class_nodes_translation[c] for c in self.seen_classes])
         unseen_idx = set([_dict_class_nodes_translation[c] for c in self.unseen_classes])
         kd_idx_to_class = {i: _dict_class_nodes_translation[c] for i, c in enumerate(s_u_idx)}
-        if self.args.dataset == "lad" or self.args.dataset == "cub":
+        if self.args.dataset == "lad" or self.args.dataset == "cub" or self.args.dataset == "awa2":
             kd_idx_to_class_idx = {i: _dict_class_nodes_translation[c] for i, c in enumerate(classes_attributes)}
             kd_idx_to_class = {i: _dict_class_nodes_translation[kd_idx_to_class_idx[i]] for i in
                                list(kd_idx_to_class.keys())}
@@ -292,8 +299,13 @@ class FinalGraphCreator:
                 [idx for idx in list(seen_idx) + list(unseen_idx) if kd_idx_to_class_idx[idx] < len(seen_idx)])
             unseen_idx -= seen_idx
         else:
-            kd_idx_to_class_idx = None
-        attributes = np.array([all_attributes[idx] for idx in s_u_idx])
+            kd_idx_to_class_idx = {i: _dict_class_nodes_translation[self.dict_class_name[c]] for i, c in enumerate(classes_attributes)}
+            kd_idx_to_class = {i: self.dict_name_class[_dict_class_nodes_translation[kd_idx_to_class_idx[i]]] for i in
+                               list(kd_idx_to_class.keys())}
+            unseen_idx.update(seen_idx)
+            seen_idx = set([idx for idx in range(len(s_u_classes)) if kd_idx_to_class_idx[idx] in seen_idx])
+            unseen_idx = set(range(len(s_u_classes))) - seen_idx
+        attributes = np.array([all_attributes[idx] for idx in range(len(s_u_idx))])
         attributes = normalize(attributes, norm='l2', axis=1)
         return kd_idx_to_class_idx, kd_idx_to_class, seen_idx, unseen_idx, attributes
 
@@ -368,17 +380,23 @@ class FinalGraphCreator:
             mean = count / (i + 1)
             if i % 10 == 0:
                 print('Progress:', i, '/', len(attributes), ';  Current Mean:', mean)  # 37273
-            neighbors_translation = [_dict_class_nodes_translation[kd_idx_to_class[neighbor]] for neighbor in
-                                     neighbors]
-            weight_edges = list(zip(np.repeat(_dict_class_nodes_translation[kd_idx_to_class[i]], len(neighbors)),
-                                    neighbors_translation, edges_weights))
+            if self.args.dataset == "awa2_w_imagenet":
+                neighbors_translation = [_dict_class_nodes_translation[self.dict_class_name[kd_idx_to_class[neighbor]]] for neighbor in
+                                         neighbors]
+                weight_edges = list(zip(np.repeat(_dict_class_nodes_translation[self.dict_class_name[kd_idx_to_class[i]]], len(neighbors)),
+                                        neighbors_translation, edges_weights))
+            else:
+                neighbors_translation = [_dict_class_nodes_translation[kd_idx_to_class[neighbor]] for neighbor in
+                                         neighbors]
+                weight_edges = list(zip(np.repeat(_dict_class_nodes_translation[kd_idx_to_class[i]], len(neighbors)),
+                                        neighbors_translation, edges_weights))
             final_kg.add_weighted_edges_from(weight_edges)
             # TODO: add the weight from the attributes to the pre graph and not replace them
             #  (minor problem because it is sparse graph)z
         classes_nodes_df_path = Path(f"{self.args.dataset}/plots/gephi/kg_classes_kind_and_attributes.csv", index=False)
         classes_nodes_df_path.parent.mkdir(parents=True, exist_ok=True)
         classes_nodes_df.to_csv(classes_nodes_df_path, index=False)
-        if self.args.dataset == "awa2":
+        if self.args.dataset == "awa2_w_imagenet":
             largest_cc = max(nx.connected_components(final_kg), key=len)
             final_kg = final_kg.subgraph(largest_cc).copy()
         return final_kg
@@ -394,11 +412,11 @@ class FinalGraphCreator:
 
     def create_labels_graph(self, _dict_class_nodes_translation):
         labels_graph = nx.Graph()
-        if self.args.dataset == "awa2":
+        if self.args.dataset == "awa2_w_imagenet":
             edges = np.array([(key, _dict_class_nodes_translation[self.dict_class_name[self.dict_idx_image_class[key]]])
                               # dict_class_nodes_translation ?
                               for key in list(self.dict_idx_image_class.keys())]).astype(str)
-        elif self.args.dataset == "cub" or self.args.dataset == "lad":
+        elif self.args.dataset == "cub" or self.args.dataset == "lad" or self.args.dataset == "awa2":
             edges = np.array([(key, _dict_class_nodes_translation[self.dict_idx_image_class[key]])
                               for key in list(self.dict_idx_image_class.keys())]).astype(str)
         else:
@@ -442,12 +460,21 @@ class FinalGraphCreator:
 
 
 def define_graph_args(dataset_name):
-    if dataset_name == "awa2":
+    if dataset_name == "awa2_w_imagenet":
         _data_path = 'ZSL _DataSets/awa2/Animals_with_Attributes2'
         _split_path = 'materials/awa2-split.json'
         _chkpt_path = "save_data_graph/awa2"
         _model_path = "materials/resnet50-base.pth"
         _attributes_path = ""
+        _pre_knowledge_graph_path = "materials/imagenet-induced-graph.json"
+        _radius = {"images_radius": 0.10, "classes_radius": 1.15}
+    elif dataset_name == "awa2":
+        _data_path = 'ZSL _DataSets/awa2/Animals_with_Attributes2'
+        _split_path = {"unseen": 'ZSL _DataSets/awa2/Animals_with_Attributes2/testclasses.txt',
+                       "seen": "ZSL _DataSets/awa2/Animals_with_Attributes2/trainclasses.txt"}
+        _chkpt_path = "save_data_graph/awa2"
+        _model_path = "materials/resnet50-base.pth"
+        _attributes_path = "ZSL _DataSets/awa2/Animals_with_Attributes2/predicate-matrix-binary.txt"
         _pre_knowledge_graph_path = "materials/imagenet-induced-graph.json"
         _radius = {"images_radius": 0.10, "classes_radius": 1.15}
     elif dataset_name == "cub":

@@ -16,6 +16,7 @@ from sklearn.preprocessing import normalize
 from statistics import harmonic_mean
 import random
 import math
+from pathlib import Path
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from itertools import chain
@@ -48,7 +49,7 @@ class GraphImporter:
     def __init__(self, args):
         self.dataset = args.dataset
         self.graph_percentage = args.graph_percentage
-        self.threshold = args.threshold
+        self.threshold = args.kg_jacard_similarity_threshold
         self.args = args
 
     def import_imdb_multi_graph(self, weights):
@@ -94,7 +95,7 @@ class GraphImporter:
                 graph.add_edge(items[0], items[1], key=str(sort_att[0]) + str(sort_att[1]))
         return graph
 
-    def import_data_graph(self, final_graph_weights, specific_split, att_weight):
+    def import_data_graph(self, final_graph_weights, specific_split, att_weight, gephi_display=False):
         from images_graph_creator_all import FinalGraphCreator, ImagesEmbeddings, define_graph_args
         weights_dict = {'classes_edges': final_graph_weights[0], 'labels_edges': final_graph_weights[1]}
         dict_paths, radius = define_graph_args(self.args.dataset)
@@ -107,10 +108,10 @@ class GraphImporter:
             if dict_val_image_class.get(image) is not None:
                 dict_val_edges[str(i)] = dict_image_class[image]
         final_graph_creator = FinalGraphCreator(dict_paths, embeds_matrix, dict_image_embed,
-                                                dict_idx_image_class, self.args.graph_percentage, self.args)
+                                                dict_idx_image_class, self.args.images_nodes_percentage, self.args)
         image_graph = final_graph_creator.create_image_graph(radius)
         kg, dict_class_nodes_translation = final_graph_creator.imagenet_knowledge_graph()
-        if self.args.dataset == "awa2":
+        if self.args.dataset == "awa2_w_imagenet":
             dict_class_name = final_graph_creator.dict_class_name
             dict_val_edges = {img: dict_class_nodes_translation[dict_class_name[dict_val_edges[img]]] for img in
                               list(dict_val_edges.keys())}
@@ -121,6 +122,20 @@ class GraphImporter:
         seen_classes, unseen_classes = final_graph_creator.seen_classes, final_graph_creator.unseen_classes
         seen_classes = [dict_class_nodes_translation[c] for c in seen_classes]
         unseen_classes = [dict_class_nodes_translation[c] for c in unseen_classes]
+        if gephi_display:
+            from kg2gephi import KG2Gephi
+            relevant_kg = kg.subgraph(set(chain(seen_classes, unseen_classes))).copy()
+            if self.args.dataset == "awa2_w_imagenet":
+                nodes_translate = {node: final_graph_creator.dict_name_class[dict_class_nodes_translation[node]] for
+                                   node in list(relevant_kg.nodes())}
+            else:
+                nodes_translate = dict_class_nodes_translation
+            kg2gephi = KG2Gephi(relevant_kg, seen_classes, unseen_classes)
+            edges_path = Path(f"{self.args.dataset}/plots/gephi/kg_jaccard_edges.csv")
+            edges_path.parent.mkdir(parents=True, exist_ok=True)
+            nodes_path = Path(f"{self.args.dataset}/plots/gephi/kg_jaccard_nodes.csv")
+            nodes_path.parent.mkdir(parents=True, exist_ok=True)
+            kg2gephi.extract_kg_csv(edges_path=edges_path, nodes_path=nodes_path, nodes_translate=nodes_translate)
         split = {'seen': seen_classes, 'unseen': unseen_classes}
         labels_graph = final_graph_creator.create_labels_graph(dict_class_nodes_translation)
         final_graph = final_graph_creator.weighted_graph(image_graph, kg, labels_graph, weights_dict)
@@ -231,6 +246,7 @@ class EmbeddingCreator(object):
         #     dict_embeddings = embeddings_maker.create_ogre_embeddings(user_initial_nodes_choice=initial_nodes)
         else:
             raise ValueError(f"Wrong name of embedding, {self.embedding}")
+        return dict_embeddings
 
 
 class TopKRanker(OneVsRestClassifier):
@@ -416,7 +432,7 @@ class EdgesPreparation:
         return dict_class_false_edges
 
 
-class Classifier:
+class MLClassifier:
     def __init__(self, dict_train_true, dict_train_false, dict_test_true, dict_unseen_edges,
                  dict_projections, embedding, args, linear_classifier=False):
         self.args = args
@@ -695,12 +711,7 @@ class Classifier:
                 edges = np.array([np.repeat(m, num_classes), classes]).T
                 class_test = np.zeros(shape=(len(edges), 1))
                 if self.linear_classifier:
-                    if set(self.args.embedding) != set('OGRE'):
-                        class_test = self.edges_distance(edges)
-                    else:
-                        for i, edge in enumerate(edges):
-                            norm = self.edge_distance(edge)
-                            class_test[i, 0] = norm
+                    class_test = self.edges_distance(edges)
                     _, probs = self.predict_edge_classification(classif2, class_test)
                 else:
                     class_test = self.edges_embeddings(edges)
@@ -877,45 +888,65 @@ class Classifier:
 
 def define_args(params):
     print(params)
-    weights = np.array([params['weights_movie_movie'], params['weights_movie_class']]).astype(float)
+    weights = np.array([params['instance_edges_weight'], params['label_edges_weight']]).astype(float)
     parser = argparse.ArgumentParser()
-    parser.add_argument('--graph_percentage', default=0.15)
-
+    parser.add_argument('--instance_edges_weight', default=params['instance_edges_weight'])
+    parser.add_argument('--label_edges_weight', default=params['label_edges_weight'])
+    parser.add_argument('--graph_percentage', default=0.14)
     parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str,
                         default=params['dataset'])  # our_imdb, awa2, cub, lad
-    parser.add_argument('--threshold', default=params['threshold'])
-    parser.add_argument('--norm', default=params['norma_types'])  # cosine / L2 Norm / L1 Norm
+    parser.add_argument('--kg_jacard_similarity_threshold', default=params['kg_jacard_similarity_threshold'])
+    parser.add_argument('--norm', default=params['norm_type'])  # cosine / L2 Norm / L1 Norm
     parser.add_argument('--embedding', default=params['embedding_type'])  # Node2Vec / Event2Vec / OGRE
     # embedding = params[2]
-    parser.add_argument('--false_per_true', default=10)
+    parser.add_argument('--false_per_true_edges', default=10)
     parser.add_argument('--ratio', default=[0.8])
     parser.add_argument('--seen_percentage', default=float(params['seen_percentage']))
-    parser.add_argument('--embedding_dimension', default=int(params['embedding_dimensions']))
-    parser.add_argument('--unseen_weight_advantage', default=0.9)
+    parser.add_argument('--embedding_dimension', default=int(params['embedding_dimension']))
+    parser.add_argument('--seen_weight_advantage', default=params["seen_advantage"])
+    parser.add_argument('--link_prediction_type', default=params["link_prediction_type"])
+    if params["embedding_type"] == "OGRE":
+        parser.add_argument('--ogre_second_neighbor_advantage', default=params["ogre_second_neighbor_advantage"])
     if params['dataset'] == 'awa2' or params['dataset'] == 'cub' or params['dataset'] == 'lad':
+        parser.add_argument("--train_percentage", help="train percentage from the seen images", default=90)
+
         parser.add_argument('--attributes_edges_weight', default=params['attributes_edges_weight'])
 
+        parser.add_argument('--images_nodes_percentage', default=0.14)
     # embedding_dimension = params[3].astype(int)
     args = parser.parse_args()
-    return args, weights
+    params["graph_percentage"] = args.graph_percentage
+    if args.link_prediction_type == "embedding_neural_network":
+        params["score_maximize"] = "auc"
+        params["optimizer"] = "adam"
+        params["lr"] = 0.001
+        params["epochs"] = 5
+        params["loss"] = "binary_cross_entropy"
+        params.pop("norm_type")
+        params["false_per_true_edges"] = args.false_per_true_edges
+    elif args.link_prediction_type == "norm_linear_regression":
+        params["score_maximize"] = "balanced_accuracy"
+        params["false_per_true_edges"] = args.false_per_true_edges
+    return args, weights, params
 
 
-def obj_func_grid(params, specific_split=True, split=None):
+def obj_func_grid(params, specific_split=True, split=None, linear_classifier=False):
     """
     Main Function for link prediction task.
     :return:
     """
-    args, weights = define_args(params)
+    args, weights, params = define_args(params)
     np.random.seed(0)
     # ratio_arr = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     graph_maker = GraphImporter(args)
-    dict_val_edges = None
     # multi_graph = graph_maker.import_imdb_multi_graph(weights)
+    dict_val_edges = None
     if args.dataset == 'our_imdb':
         weighted_graph = graph_maker.import_imdb_weighted_graph(weights)
     elif args.dataset == 'awa2' or args.dataset == 'cub' or args.dataset == 'lad':
         awa2_att_weight = params['attributes_edges_weight']
-        weighted_graph, dict_val_edges, split = graph_maker.import_data_graph(weights, specific_split, awa2_att_weight)
+        weighted_graph, dict_val_edges, split = graph_maker.import_data_graph(weights, specific_split, awa2_att_weight,
+                                                                              gephi_display=True)
     else:
         raise ValueError(f"Wrong name of DataSet, {args.dataset}")
     from graph_ZSL_generic import EdgesPreparation
@@ -930,8 +961,8 @@ def obj_func_grid(params, specific_split=True, split=None):
     embeddings_maker = EmbeddingCreator(graph, args.embedding_dimension, args.dataset, args.embedding)
     dict_embeddings = embeddings_maker.dict_embeddings
 
-    classifier = Classifier(dict_train_true, dict_train_false, dict_test_true, dict_unseen_edges,
-                            dict_embeddings, args.embedding, args, linear_classifier=False)
+    classifier = MLClassifier(dict_train_true, dict_train_false, dict_test_true, dict_unseen_edges,
+                            dict_embeddings, args.embedding, args, linear_classifier=linear_classifier)
     classif, dict_class_movie_test = classifier.train()
     # dict_class_measures_node2vec, pred, pred_true, hist_real_unseen_pred = classifier.evaluate_for_hist(classif,
     #                                                                                                     dict_class_movie_test)
@@ -940,7 +971,7 @@ def obj_func_grid(params, specific_split=True, split=None):
 
     measures, conf_matrix, binary_conf_matrix = classifier.confusion_matrix_maker(dict_class_measures_node2vec,
                                                                                   pred, pred_true)
-    # classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix)
+    classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix)
     # try:
     #     values = pd.read_csv('our_imdb/train/grid_search.csv')
     #     df1 = pd.DataFrame(np.column_stack((params.reshape(1, 8),
@@ -969,40 +1000,46 @@ if __name__ == '__main__':
     seen_accuracies, unseen_accuracies = [], []
     parameters = {
         "dataset": ['cub'],  # 'our_imdb', 'awa2', 'cub', 'lad'
-        "embedding_type": ["Node2Vec"],
-        "embedding_dimensions": [128],
-        "weights_movie_class": [30],
-        "weights_movie_movie": [1],
-        # "weights_movie_class": np.logspace(-2, 3, 6),
-        # "weights_movie_movie": np.logspace(-2, 3, 6),
-        "norma_types": ['cosine'],
-        "threshold": [0.3],
-        "seen_percentage": [0.4],
+        "embedding_type": ["Node2Vec"],  # "Node2Vec", "OGRE", "hope"
+        "embedding_dimension": [128],  # 128
+        "label_edges_weight": [100],  # 30
+        "instance_edges_weight": [100],  # 1
+        # "label_edges_weight": np.logspace(0, 2, 3).astype(int),
+        # "instance_edges_weight": np.logspace(0, 2, 3).astype(int),
+        "norm_type": ['cosine'],  # 'cosine', "L2 Norm", "L1 Norm"
+        "kg_jacard_similarity_threshold": [0.3],
+        "seen_percentage": [0.8],
+        # "seen_advantage": np.linspace(0, 1.0, 11),
+        "seen_advantage": [0.7],
         # "seen_percentage": np.linspace(0.1, 0.9, 9)
-        "attributes_edges_weight": [100]  # 100 is the best for now
+        "attributes_edges_weight": [1],  # 100 is the best for now
+        # "attributes_edges_weight": np.logspace(0, 2, 3).astype(int),  # 100 is the best for now
+        "link_prediction_type": ["embedding_neural_network"]  # "norm_argmin", "norm_linear_regression", "embedding_neural_network"
     }
     num = 0
     for dataset in parameters["dataset"]:
         for e_type in parameters["embedding_type"]:
-            for dim in parameters["embedding_dimensions"]:
-                for w_m_c in parameters["weights_movie_class"]:
-                    for w_m_m in parameters["weights_movie_movie"]:
-                        for norma_type in parameters["norma_types"]:
-                            for threshold in parameters["threshold"]:
+            for dim in parameters["embedding_dimension"]:
+                for w_m_c in parameters["label_edges_weight"]:
+                    for w_m_m in parameters["instance_edges_weight"]:
+                        for norma_type in parameters["norm_type"]:
+                            for threshold in parameters["kg_jacard_similarity_threshold"]:
                                 for per in parameters["seen_percentage"]:
-                                    for att in parameters["attributes_edges_weight"]:
-                                        param = np.array(
-                                            [dataset, e_type, dim, w_m_c, w_m_m, norma_type, threshold, per, att])
-                                        dict_param = {p: param[i] for i, p in enumerate(list(parameters.keys()))}
-                                        print(f'iteration number {num}')
-                                        num += 1
-                                        measures = obj_func_grid(dict_param)
-                                        seen_acc = ["seen_accuracy"]
-                                        unseen_acc = ["unseen_accuracy"]
-                                        seen_accuracies.append(seen_acc * 100)
-                                        unseen_accuracies.append(unseen_acc * 100)
-                                        # print("all accuracy: ", acc)
+                                    for advantage in parameters["seen_advantage"]:
+                                        for att in parameters["attributes_edges_weight"]:
+                                            for lp_type in parameters["link_prediction_type"]:
+                                                param = np.array(
+                                                    [dataset, e_type, dim, w_m_c, w_m_m, norma_type, threshold, per, advantage, att, lp_type])
+                                                dict_param = {p: param[i] for i, p in enumerate(list(parameters.keys()))}
+                                                print(f'iteration number {num}')
+                                                num += 1
+                                                measures = obj_func_grid(dict_param)
+                                                seen_acc = ["seen_accuracy"]
+                                                unseen_acc = ["unseen_accuracy"]
+                                                seen_accuracies.append(seen_acc * 100)
+                                                unseen_accuracies.append(unseen_acc * 100)
+                                                # print("all accuracy: ", acc)
     dict_measures = {"unseen_accuracy": unseen_accuracies, "seen_accuracy": seen_accuracies}
     plots_2measures_vs_parameter(dict_measures, parameters["seen_percentage"], 'seen Percentage', parameters['dataset'],
-                                 'Zero Shot Learning', "Accuracy", parameters["norma_types"][0],
+                                 'Zero Shot Learning', "Accuracy", parameters["norm_type"][0],
                                  parameters["embedding_type"][0])

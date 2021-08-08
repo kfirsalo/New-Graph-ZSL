@@ -37,6 +37,11 @@ def grid(dict_params, ignore_params=None):
 
 
 def plots_2measures_vs_parameter(dict_measures, x_axis, relevant_keys, title, x_title, y_title, path):
+    mpl.rcParams['xtick.labelsize'] = 14
+    mpl.rcParams['ytick.labelsize'] = 16
+    mpl.rcParams['axes.titlesize'] = 14
+    mpl.rcParams['axes.labelsize'] = 16
+    plt.rcParams["font.family"] = "Times New Roman"
     keys = list(dict_measures.keys())
     # bottom = max([np.min(np.array([np.min(dict_measures[key]) for key in keys]))-10, 0])
     # top = min([np.max(np.array([np.max(dict_measures[key]) for key in keys]))+10, 100])
@@ -68,6 +73,11 @@ def plots_2measures_vs_parameter(dict_measures, x_axis, relevant_keys, title, x_
 
 def old_plots_2measures_vs_parameter(dict_measures, parameter_arr, parameter_name, data_name, task, measure, norm,
                                      embedding):
+    mpl.rcParams['xtick.labelsize'] = 14
+    mpl.rcParams['ytick.labelsize'] = 16
+    mpl.rcParams['axes.titlesize'] = 14
+    mpl.rcParams['axes.labelsize'] = 16
+    plt.rcParams["font.family"] = "Times New Roman"
     x_axis = np.array(parameter_arr)
     keys = list(dict_measures.keys())
     bottom = max([np.min(np.array([np.min(dict_measures[key]) for key in keys])) - 10, 0])
@@ -105,6 +115,7 @@ def hist_plot(y_array, title, x_title, y_title):
     mpl.rcParams['ytick.labelsize'] = 16
     mpl.rcParams['axes.titlesize'] = 14
     mpl.rcParams['axes.labelsize'] = 16
+    plt.rcParams["font.family"] = "Times New Roman"
     plt.figure(0)
     plt.bar(np.arange(len(y_array)), y_array, color='black')
     plt.title(title)
@@ -119,7 +130,9 @@ def plot_confusion_matrix(conf_matrix, title, x_title, y_title, save_path, fig=1
     mpl.rcParams['ytick.labelsize'] = 16
     mpl.rcParams['axes.titlesize'] = 14
     mpl.rcParams['axes.labelsize'] = 16
-    plt.title(title)
+    plt.rcParams["font.family"] = "Times New Roman"
+    if title is not None:
+        plt.title(title)
     plt.xlabel(x_title)
     plt.ylabel(y_title)
     plt.imshow(conf_matrix, cmap=cmap, vmin=vmin, vmax=vmax)
@@ -134,10 +147,17 @@ def get_classes(images_dir):
 
 def classes_split(dataset, data_dir, split_dir, return_translation=False):
     images_dir = os.path.join(data_dir, "images")
-    if dataset == "awa2":
+    if dataset == "awa2_w_imagenet":
         awa2_split = json.load(open(split_dir, 'r'))
         seen_classes = awa2_split['train_names']
         unseen_classes = awa2_split['test_names']
+        classes_translation = None
+    elif dataset == "awa2":
+        seen_classes = open(split_dir['seen'], "r").readlines()
+        unseen_classes = open(split_dir['unseen'], "r").readlines()
+        seen_classes = np.array([c.strip().split()[0] for c in seen_classes])
+        unseen_classes = np.array([c.strip().split()[0] for c in unseen_classes])
+        classes_translation = None
     elif dataset == "cub":
         train_test_split = sio.loadmat(split_dir)
         classes = get_classes(images_dir)

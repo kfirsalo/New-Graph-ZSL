@@ -1,6 +1,7 @@
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 import numpy as np
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -75,7 +76,7 @@ class DrawUnseenGraph:
             self.train_samples, label=3)
         test_samples_points, test_samples_labels = self._fit_embeds(self.test_samples), self._fit_label(
             self.test_samples, label=4)
-        feat_cols = ["x node embedding", "y node embedding"]
+        feat_cols = ["Principal Component 1", "Principal Component 2"]
         data = np.concatenate((seen_class_points, unseen_class_points, unseen_samples_points, train_samples_points,
                                test_samples_points))
         labels = np.concatenate((seen_class_labels, unseen_class_labels, unseen_samples_labels, train_samples_labels,
@@ -90,13 +91,18 @@ class DrawUnseenGraph:
         return df, labels_translate, style_translate
 
     def draw_graph(self):
+        mpl.rcParams['xtick.labelsize'] = 14
+        mpl.rcParams['ytick.labelsize'] = 18
+        mpl.rcParams['axes.titlesize'] = 20
+        mpl.rcParams['axes.labelsize'] = 18
+        plt.rcParams["font.family"] = "Times New Roman"
         data, label_translate, style_translate = self._prepare_data()
         style_order = list(style_translate.values())[0], list(style_translate.values())[-1]
-        data = data.sort_values("x node embedding")
+        data = data.sort_values("Principal Component 1")
         plt.figure(figsize=(16, 10))
-        plt.title(f"{self.kind} visualization, {self.dataset} dataset - {self.args.embedding} embedding")
+        plt.title(f"{self.kind.upper()} Visualization of {self.args.embedding} Embedding Applied on {self.dataset.upper()} Dataset")
         sns.scatterplot(
-            x="x node embedding", y="y node embedding",
+            x="Principal Component 1", y="Principal Component 2",
             hue="labels",
             style="node kind",
             palette=['green', 'orange', 'blue', 'dodgerblue', 'red'],
@@ -121,6 +127,7 @@ class DrawUnseenGraph:
         #     f"instance_weight={self.args.instance_edges_weight}.png")
         visualization_path.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(visualization_path)
+        plt.close()
         # plt.scatter(self.unseen_samples_points[0], y_other[1], c='yellow', label='other')
         # plt.scatter(x_seen, y_seen, c='b', label='seen')
         # plt.scatter(x_unseen, y_unseen, c='r', label='unseen')

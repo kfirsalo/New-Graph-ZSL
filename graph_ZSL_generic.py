@@ -26,6 +26,7 @@ from utils import set_gpu
 from utlis_graph_zsl import hist_plot, plot_confusion_matrix, plots_2measures_vs_parameter, grid
 from IMDb_data_preparation_E2V import MoviesGraph
 import torch
+from torch.utils.data import DataLoader
 from torch.backends import cudnn
 from gem.embedding.gf import GraphFactorization
 from gem.embedding.hope import HOPE
@@ -665,9 +666,19 @@ class Classifier:
             from link_prediction_models import train_edge_classification
             classif2 = train_edge_classification(np.array(x_train_all), np.array(y_train_all))
         elif self.args.link_prediction_type == "embedding_neural_network":
-            from link_prediction_models import create_keras_model, keras_model_fit
-            classif2 = create_keras_model(len(x_train_all[0]), int(self.args.embedding_dimension / 2))
-            classif2 = keras_model_fit(classif2, x_train_all, y_train_all)
+            from link_prediction_models import create_keras_model, keras_model_fit, EmbeddingLinkPredictionDataset,\
+                EmbeddingLinkPredictionNetwork, TrainLinkPrediction
+            # classif2 = create_keras_model(len(x_train_all[0]), int(self.args.embedding_dimension / 2))
+            # classif2 = keras_model_fit(classif2, x_train_all, y_train_all)
+            dataset = EmbeddingLinkPredictionDataset(x_train_all, y_train_all)
+            train_set, val_set = torch.utils.data.random_split(dataset, [int(0.7 * len(dataset)), len(dataset)-int(0.7 * len(dataset))])
+            train_loader = DataLoader(train_set, batch_size=32, shuffle=True)
+            val_loader = DataLoader(val_set, batch_size=32, shuffle=False)
+            net = EmbeddingLinkPredictionNetwork(len(x_train_all[0]), int(self.args.embedding_dimension / 2), 0.01, 0.0, "cpu")
+            train_lp = TrainLinkPrediction(net, epochs=10, train_loader=train_loader, val_loader=val_loader)
+            classif2 = train_lp.train()
+
+
         for c in test_classes:
             dict_movie_edge = {}
             for edge in self.dict_test_true[c]:
@@ -786,9 +797,13 @@ class Classifier:
                     class_test = self.edges_distance(edges)
                     probs = -predict_edge_classification(classif, class_test)[1].T[0]
                 elif self.args.link_prediction_type == "embedding_neural_network":
-                    from link_prediction_models import keras_model_predict
+                    from link_prediction_models import keras_model_predict, EmbeddingLinkPredictionDataset, TrainLinkPrediction
                     embed_test = self.edges_embeddings(edges)
-                    probs = -keras_model_predict(classif, embed_test)
+                    test_set = EmbeddingLinkPredictionDataset(embed_test, labels=np.zeros(len(embed_test)))
+                    test_loader = DataLoader(test_set, batch_size=32, shuffle=False)
+                    lp = TrainLinkPrediction(classif, epochs=0, test_loader=test_loader)
+                    # probs = -keras_model_predict(classif, embed_test)
+                    probs = lp.test()
                 # else:
                 #     for j, edge in enumerate(edges):
                 #         norm = self.edge_distance(edge)
@@ -1199,7 +1214,7 @@ if __name__ == '__main__':
         # "seen_percentage": np.linspace(0.1, 0.9, 9)
         "attributes_edges_weight": [1],  # 100 is the best for now
         # "attributes_edges_weight": np.logspace(0, 2, 3).astype(int),  # 100 is the best for now
-        "link_prediction_type": ["norm_linear_regression"]  # "norm_argmin", "norm_linear_regression", "embedding_neural_network"
+        "link_prediction_type": ["embedding_neural_network"]  # "norm_argmin", "norm_linear_regression", "embedding_neural_network"
     }
     if "OGRE" in parameters["embedding_type"]:
         parameters.update({"ogre_second_neighbor_advantage": [0.01]})  # 0.1

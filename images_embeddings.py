@@ -153,8 +153,7 @@ def confusion_matrix_maker(dataset, gt, predictions):
     title = f'Confusion Matrix, Resnet50 Classification {dataset}'
     x_title = f"True Labels"
     y_title = f"Predicted Labels"
-    plot_confusion_matrix(conf_matrix, title, x_title, y_title)
-    plt.savefig(f'{dataset}/plots/confusion_matrix_ResNet50_{dataset}')
+    plot_confusion_matrix(conf_matrix, title, x_title, y_title, f'{dataset}/plots/confusion_matrix_ResNet50_{dataset}')
 
 
 def define_path(dataset_name):

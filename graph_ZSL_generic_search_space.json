@@ -1,0 +1,35 @@
+{
+  "dataset": {"_type":"choice", "_value": ["lad"]},
+  "label_edges_weight":{"_type":"uniform","_value":[1e-1, 100]},
+  "instance_edges_weight":{"_type":"uniform","_value":[1e-1, 100]},
+  "kg_jacard_similarity_threshold":{"_type":"choice","_value":[3e-1]},
+  "seen_percentage":{"_type":"choice","_value":[8e-1]},
+  "seen_advantage":{"_type":"choice","_value":["None"]},
+  "attributes_edges_weight":{"_type":"uniform","_value":[1e-1, 100]},
+  "embedding_type": {
+    "_type": "choice",
+    "_value": [
+      {"_name": "Node2Vec",
+        "embedding_dimension": {"_type": "choice", "_value": [32, 64, 128, 256]}},
+      {"_name":  "OGRE",
+        "embedding_dimension": {"_type": "choice", "_value": [32, 64, 128, 256]},
+        "ogre_second_neighbor_advantage": {"_type": "choice", "_value": [0, 1e-3, 1e-2]},
+        "ogre_initial_graph": {"_type": "choice", "_value": ["instance_nodes", "label_edges"]}}]},
+  "link_prediction_type": {
+    "_type": "choice",
+    "_value": [
+      {"_name": "norm_argmin",
+        "norm_type":{"_type":"choice","_value":["cosine", "L2 Norm", "L1 Norm"]}},
+      {"_name":  "norm_linear_regression",
+        "false_per_true_edges":{"_type":"randint","_value":[1, 20]},
+        "norm_type":{"_type":"choice","_value":["cosine", "L2 Norm", "L1 Norm"]},
+        "regression_solver": {"_type": "choice", "_value": ["lbfgs", "liblinear", "saga"]}},
+      {"_name": "embedding_neural_network",
+        "false_per_true_edges":{"_type":"randint","_value":[1, 20]},
+        "embedding_nn_lr": {"_type": "uniform", "_value": [1e-4, 1e-2]},
+        "embedding_nn_epochs": {"_type": "choice", "_value": [10]},
+        "embedding_nn_optimizer": {"_type": "choice", "_value": ["adam"]},
+        "embedding_nn_loss": {"_type": "choice", "_value": ["weighted_binary_cross_entropy"]},
+        "embedding_nn_weight_decay": {"_type": "choice", "_value": [0, 1e-4, 1e-2, 1]},
+        "embedding_nn_dropout_prob": {"_type": "choice", "_value": [0, 1e-3, 1e-5]}}]}
+}

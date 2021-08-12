@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GridSearchCV
 from sklearn.multiclass import OneVsRestClassifier
+from sklearn import metrics
 import random
 import tensorflow as tf
 from tensorflow.keras.layers import Conv2D, Flatten, Dense, Activation
@@ -14,6 +15,8 @@ import torch.optim as optim
 from sklearn.metrics import accuracy_score
 import nni
 from copy import deepcopy
+
+from utlis_graph_zsl import replace_max
 
 seed = 0
 torch.manual_seed(seed)
@@ -39,15 +42,16 @@ class TopKRanker(OneVsRestClassifier):
         return prediction, probs
 
 
-def train_edge_classification(x_train, y_train):
+def train_edge_classification(x_train, y_train, solver="lbfgs"):
     """
     train  the classifier with the train set.
     :param x_train: The features' edge- norm (train set).
     :param y_train: The edges labels- 0 for true, 1 for false (train set).
     :return: The classifier
     """
-    model = LogisticRegression()
-    parameters = {"penalty": ["l2"], "C": [0.01, 0.1, 1]}
+    model = LogisticRegression(solver=solver, class_weight="balanced")
+    penalty = ["l2"] if solver == "lbfgs" else ["l2", "l1"]
+    parameters = {"penalty": penalty, "C": [0.01, 0.1, 1.0, 10.0]}
     model = TopKRanker(
         GridSearchCV(model, param_grid=parameters, cv=2, scoring='balanced_accuracy', n_jobs=1, verbose=0,
                      pre_dispatch='n_jobs'))
@@ -118,21 +122,27 @@ class EmbeddingLinkPredictionDataset(Dataset):
 
 
 class EmbeddingLinkPredictionNetwork(nn.Module):
-    def __init__(self, input_dim: int, hidden_layer_dim: int, lr: float = 0.01, weight_decay=0.0, device="cpu"):
+    def __init__(self, input_dim: int, hidden_layer_dim: int, lr: float = 0.001, weight_decay: float = 0.0,
+                 pos_weight: float = 10.0, dropout_prob: float = 0.5, optimizer="adam",
+                 loss="weighted_binary_cross_entropy", device="cpu"):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_layer_dim)
         self.relu1 = nn.ReLU()
+        self.dropout1 = nn.Dropout(p=dropout_prob)
         self.fc2 = nn.Linear(hidden_layer_dim, 2)
         self.sigmoid = nn.Sigmoid()
 
-        self.optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay=weight_decay)
-        self.loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([1, 10]))
+        if optimizer == "adam":
+            self.optimizer = optim.Adam(self.parameters(), lr=lr, weight_decay=weight_decay, amsgrad=True)
+        if loss == "weighted_binary_cross_entropy":
+            self.loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([1, pos_weight]))
         self.device = device
         self.to(self.device)
 
     def forward(self, x):
         out = self.fc1(x)
         out = self.relu1(out)
+        out = self.dropout1(out)
         out = self.fc2(out)
         out = self.sigmoid(out)
         return out
@@ -170,18 +180,18 @@ class TrainLinkPrediction:
                 running_loss += loss.item()
                 final_preds = 1 - torch.argmax(predictions, dim=1)
                 row_labels = labels[:, 0].cpu()
-                samples_weight = row_labels*10 + 1 - row_labels
+                samples_weight = row_labels * 10 + 1 - row_labels
                 accuracy.append(accuracy_score(row_labels, final_preds.cpu(), sample_weight=samples_weight))
-            _, _, val_accuracy = self.eval()
-            if val_accuracy > best_val_accuracy:
-                best_val_accuracy = val_accuracy
+            _, _, val_accuracy, val_auc = self.eval()
+            best_val_accuracy, change = replace_max(best_val_accuracy, val_accuracy, report_change=True)
+            if change:
                 best_epoch = epoch
                 best_classif = deepcopy(self.model)
             if self.to_nni:
                 nni.report_intermediate_result(val_accuracy)
             else:
-                print('num_epochs:{} || loss: {} || train accuracy: {} || val accuracy: {} '
-                      .format(epoch, running_loss / len(self.train_loader), np.mean(accuracy[-9:]), val_accuracy))
+                print('num_epochs:{} || loss: {} || train accuracy: {} || val accuracy: {} || val auc: {}'
+                      .format(epoch, running_loss / len(self.train_loader), np.mean(accuracy[-9:]), val_accuracy, val_auc))
                 running_loss = 0.0
         if self.to_nni:
             nni.report_final_result({'default': best_val_accuracy, 'best_num_epochs': best_epoch})
@@ -196,7 +206,6 @@ class TrainLinkPrediction:
                 embeddings = torch.tensor(np.array(embeddings), dtype=torch.float, device=self.device)
                 self.model.eval()
                 predictions = self.model(embeddings)
-                predictions = 1 - torch.argmax(predictions, dim=1)
                 if concat:
                     final_predictions = torch.cat((final_predictions, predictions))
                     all_labels = torch.cat((all_labels, labels))
@@ -205,8 +214,12 @@ class TrainLinkPrediction:
                     all_labels = labels
                     concat = True
             all_row_labels = all_labels[:, 0].cpu()
-            samples_weight = all_row_labels*10 + 1 - all_row_labels
-        return all_labels.cpu(), final_predictions.cpu(), accuracy_score(all_row_labels, final_predictions.cpu(), sample_weight=samples_weight)
+            fpr, tpr, thresholds = metrics.roc_curve(all_row_labels, final_predictions[:, 0], pos_label=1)
+            auc = metrics.auc(fpr, tpr)
+            samples_weight = all_row_labels * 10 + 1 - all_row_labels
+            final_predictions = 1 - torch.argmax(final_predictions, dim=1)
+        return all_labels.cpu(), final_predictions.cpu(), accuracy_score(all_row_labels, final_predictions.cpu(),
+                                                                             sample_weight=samples_weight), auc
 
     def test(self):
         self.model.eval()

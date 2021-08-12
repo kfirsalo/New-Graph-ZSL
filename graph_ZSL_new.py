@@ -441,7 +441,6 @@ class MLClassifier:
         self.dict_false_edges = dict_train_false
         self.dict_test_true = dict_test_true
         self.dict_unseen_edges = dict_unseen_edges
-        self.norm = set(args.norm)
         self.dict_projections = dict_projections
         self.linear_classifier = linear_classifier
 
@@ -468,15 +467,15 @@ class MLClassifier:
         """
         embed_edges_0 = [self.dict_projections[edge[0]] for edge in edges]
         embed_edges_1 = [self.dict_projections[edge[1]] for edge in edges]
-        if self.norm == set('L1 Norm'):
+        if set(self.args.norm) == set('L1 Norm'):
             norms = la.norm(np.subtract(embed_edges_0, embed_edges_1), 1, axis=1)
-        elif self.norm == set('L2 Norm'):
+        elif set(self.args.norm) == set('L2 Norm'):
             norms = la.norm(np.subtract(embed_edges_0, embed_edges_1), 2, axis=1)
-        elif self.norm == set('cosine'):
+        elif set(self.args.norm) == set('cosine'):
             all_norms = cosine_similarity(embed_edges_0, embed_edges_1)
             norms = [math.acos(all_norms[i, i]) for i in range(len(all_norms))]
         else:
-            raise ValueError(f"Wrong name of norm, {self.norm}")
+            raise ValueError(f"Wrong name of norm, {self.args.norm}")
         final_norms = np.array(norms).reshape(-1, 1)
         return final_norms
 
@@ -495,14 +494,14 @@ class MLClassifier:
             embd1 = np.ones(self.args.embedding_dimension).astype(float)
             embd2 = np.zeros(self.args.embedding_dimension).astype(float)
             pass
-        if self.norm == set('L1 Norm'):
+        if set(self.args.norm) == set('L1 Norm'):
             norm = la.norm(np.subtract(embd1, embd2), 1)
-        elif self.norm == set('L2 Norm'):
+        elif set(self.args.norm) == set('L2 Norm'):
             norm = la.norm(np.subtract(embd1, embd2), 1)
-        elif self.norm == set('cosine'):
+        elif set(self.args.norm) == set('cosine'):
             norm = math.acos(cosine_similarity(embd1.reshape(1, -1), embd2.reshape(1, -1))[0])
         else:
-            raise ValueError(f"Wrong name of norm, {self.norm}")
+            raise ValueError(f"Wrong name of norm, {self.args.norm}")
         return norm
 
     def calculate_classifier_value(self, true_edges, false_edges):

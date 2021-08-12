@@ -19,11 +19,13 @@ from sklearn.multiclass import OneVsRestClassifier
 from sklearn.linear_model import LogisticRegression
 import random
 import math
+import nni
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from itertools import chain
 from utils import set_gpu
-from utlis_graph_zsl import hist_plot, plot_confusion_matrix, plots_2measures_vs_parameter, grid
+from utlis_graph_zsl import hist_plot, plot_confusion_matrix, plots_2measures_vs_parameter, grid, nested_nni_to_dict, \
+    replace_max
 from IMDb_data_preparation_E2V import MoviesGraph
 import torch
 from torch.utils.data import DataLoader
@@ -473,7 +475,6 @@ class Classifier:
         self.dict_true_edges = dict_train_true
         self.dict_test_true = dict_test_true
         self.dict_unseen_edges = dict_unseen_edges
-        self.norm = set(args.norm)
         self.dict_projections = dict_projections
 
     def edges_distance(self, edges):
@@ -486,11 +487,11 @@ class Classifier:
         """
         embed_edges_0 = [self.dict_projections[edge[0]] for edge in edges]
         embed_edges_1 = [self.dict_projections[edge[1]] for edge in edges]
-        if self.norm == set('L1 Norm'):
+        if set(self.args.norm) == set('L1 Norm'):
             norms = la.norm(np.subtract(embed_edges_0, embed_edges_1), 1, axis=1)
-        elif self.norm == set('L2 Norm'):
+        elif set(self.args.norm) == set('L2 Norm'):
             norms = la.norm(np.subtract(embed_edges_0, embed_edges_1), 2, axis=1)
-        elif self.norm == set('cosine'):
+        elif set(self.args.norm) == set('cosine'):
             try:
                 all_norms = cosine_similarity(embed_edges_0, embed_edges_1)
                 norms = []
@@ -505,7 +506,7 @@ class Classifier:
             except:
                 print('a')
         else:
-            raise ValueError(f"Wrong name of norm, {self.norm}")
+            raise ValueError(f"Wrong name of norm, {self.args.norm}")
         final_norms = np.array(norms).reshape(-1, 1)
         return final_norms
 
@@ -524,14 +525,14 @@ class Classifier:
             embd1 = np.ones(self.args.embedding_dimension).astype(float)
             embd2 = np.zeros(self.args.embedding_dimension).astype(float)
             pass
-        if self.norm == set('L1 Norm'):
+        if set(self.args.norm) == set('L1 Norm'):
             norm = la.norm(np.subtract(embd1, embd2), 1)
-        elif self.norm == set('L2 Norm'):
+        elif set(self.args.norm) == set('L2 Norm'):
             norm = la.norm(np.subtract(embd1, embd2), 1)
-        elif self.norm == set('cosine'):
+        elif set(self.args.norm) == set('cosine'):
             norm = math.acos(cosine_similarity(embd1.reshape(1, -1), embd2.reshape(1, -1))[0])
         else:
-            raise ValueError(f"Wrong name of norm, {self.norm}")
+            raise ValueError(f"Wrong name of norm, {self.args.norm}")
         return norm
 
     def edges_embeddings(self, edges):
@@ -633,7 +634,6 @@ class Classifier:
         return dict_class_movie_test
 
     def ml_train(self, dict_false_edges):
-        path2 = os.path.join(self.args.dataset, f'train/dict_{self.embedding}_{self.args.norm}.pkl')
         classes = list(self.dict_true_edges.keys())
         # for i, k in enumerate(sorted(self.dict_true_edges, key=lambda x: len(self.dict_true_edges[x]), reverse=True)):
         #     classes[i] = k
@@ -664,20 +664,27 @@ class Classifier:
         y_train_all = shuff[:, -2:].astype(int)
         if self.args.link_prediction_type == "norm_linear_regression":
             from link_prediction_models import train_edge_classification
-            classif2 = train_edge_classification(np.array(x_train_all), np.array(y_train_all))
+            classif2 = train_edge_classification(np.array(x_train_all), np.array(y_train_all),
+                                                 solver=self.args.regression_solver)
         elif self.args.link_prediction_type == "embedding_neural_network":
-            from link_prediction_models import create_keras_model, keras_model_fit, EmbeddingLinkPredictionDataset,\
+            from link_prediction_models import create_keras_model, keras_model_fit, EmbeddingLinkPredictionDataset, \
                 EmbeddingLinkPredictionNetwork, TrainLinkPrediction
             # classif2 = create_keras_model(len(x_train_all[0]), int(self.args.embedding_dimension / 2))
             # classif2 = keras_model_fit(classif2, x_train_all, y_train_all)
             dataset = EmbeddingLinkPredictionDataset(x_train_all, y_train_all)
-            train_set, val_set = torch.utils.data.random_split(dataset, [int(0.7 * len(dataset)), len(dataset)-int(0.7 * len(dataset))])
+            train_set, val_set = torch.utils.data.random_split(dataset, [int(0.8 * len(dataset)),
+                                                                         len(dataset) - int(0.8 * len(dataset))])
             train_loader = DataLoader(train_set, batch_size=32, shuffle=True)
             val_loader = DataLoader(val_set, batch_size=32, shuffle=False)
-            net = EmbeddingLinkPredictionNetwork(len(x_train_all[0]), int(self.args.embedding_dimension / 2), 0.01, 0.0, "cpu")
-            train_lp = TrainLinkPrediction(net, epochs=10, train_loader=train_loader, val_loader=val_loader)
+            net = EmbeddingLinkPredictionNetwork(len(x_train_all[0]), int(self.args.embedding_dimension / 2),
+                                                 lr=self.args.embedding_nn_lr,
+                                                 weight_decay=self.args.embedding_nn_weight_decay,
+                                                 dropout_prob=self.args.embedding_nn_dropout_prob,
+                                                 optimizer=self.args.embedding_nn_optimizer,
+                                                 loss=self.args.embedding_nn_loss)
+            train_lp = TrainLinkPrediction(net, epochs=self.args.embedding_nn_epochs,
+                                           train_loader=train_loader, val_loader=val_loader)
             classif2 = train_lp.train()
-
 
         for c in test_classes:
             dict_movie_edge = {}
@@ -697,10 +704,6 @@ class Classifier:
                     movie = edge[0]
                 dict_movie_edge[movie] = edge
             dict_class_movie_test[c] = dict_movie_edge.copy()
-        # if not os.path.exists(os.path.join('Graph-ZSL', self.args.dataset)):
-        #     os.makedirs(os.path.join('Graph-ZSL', self.args.dataset))
-        with open(path2, 'wb') as fid:
-            pickle.dump(dict_class_movie_test, fid)
         return dict_class_movie_test, classif2
 
     def evaluate(self, dict_class_movie_test):
@@ -797,7 +800,8 @@ class Classifier:
                     class_test = self.edges_distance(edges)
                     probs = -predict_edge_classification(classif, class_test)[1].T[0]
                 elif self.args.link_prediction_type == "embedding_neural_network":
-                    from link_prediction_models import keras_model_predict, EmbeddingLinkPredictionDataset, TrainLinkPrediction
+                    from link_prediction_models import keras_model_predict, EmbeddingLinkPredictionDataset, \
+                        TrainLinkPrediction
                     embed_test = self.edges_embeddings(edges)
                     test_set = EmbeddingLinkPredictionDataset(embed_test, labels=np.zeros(len(embed_test)))
                     test_loader = DataLoader(test_set, batch_size=32, shuffle=False)
@@ -860,9 +864,6 @@ class Classifier:
             accuracy = count / len(class_movies)
             dict_measures['acc'] = accuracy
             dict_class_measures[c] = dict_measures.copy()
-        with open(os.path.join(self.args.dataset, f'dict_class_measures_{self.embedding}_{self.args.norm}.pkl'),
-                  'wb') as handle:
-            pickle.dump(dict_class_measures, handle, protocol=3)
         # TODO dict class measures for every ratio
         return dict_class_measures, pred, pred_true, hist_real_unseen_pred
 
@@ -982,14 +983,12 @@ def define_args(params):
     parser = argparse.ArgumentParser()
     parser.add_argument('--instance_edges_weight', default=params['instance_edges_weight'])
     parser.add_argument('--label_edges_weight', default=params['label_edges_weight'])
-    parser.add_argument('--graph_percentage', default=0.14)
+    parser.add_argument('--graph_percentage', default=0.3)
     parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str,
                         default=params['dataset'])  # our_imdb, awa2, cub, lad
     parser.add_argument('--kg_jacard_similarity_threshold', default=params['kg_jacard_similarity_threshold'])
-    parser.add_argument('--norm', default=params['norm_type'])  # cosine / L2 Norm / L1 Norm
     parser.add_argument('--embedding', default=params['embedding_type'])  # Node2Vec / Event2Vec / OGRE
     # embedding = params[2]
-    parser.add_argument('--false_per_true_edges', default=10)
     parser.add_argument('--ratio', default=[0.8])
     parser.add_argument('--seen_percentage', default=float(params['seen_percentage']))
     parser.add_argument('--embedding_dimension', default=int(params['embedding_dimension']))
@@ -997,30 +996,39 @@ def define_args(params):
     parser.add_argument('--link_prediction_type', default=params["link_prediction_type"])
     if params["embedding_type"] == "OGRE":
         parser.add_argument('--ogre_second_neighbor_advantage', default=params["ogre_second_neighbor_advantage"])
+        parser.add_argument('--ogre_initial_graph', default=params["ogre_initial_graph"])
     if params['dataset'] == 'awa2' or params['dataset'] == 'cub' or params['dataset'] == 'lad':
         parser.add_argument("--train_percentage", help="train percentage from the seen images", default=90)
 
         parser.add_argument('--attributes_edges_weight', default=params['attributes_edges_weight'])
 
-        parser.add_argument('--images_nodes_percentage', default=0.14)
+        parser.add_argument('--images_nodes_percentage', default=0.3)
+    if params["link_prediction_type"] == "embedding_neural_network":
+        parser.add_argument('--false_per_true_edges', default=params["false_per_true_edges"])
+        parser.add_argument('--embedding_nn_optimizer', default=params["embedding_nn_optimizer"])
+        parser.add_argument('--embedding_nn_lr', default=params["embedding_nn_lr"])
+        parser.add_argument('--embedding_nn_weight_decay', default=params["embedding_nn_weight_decay"])
+        parser.add_argument('--embedding_nn_dropout_prob', default=params["embedding_nn_dropout_prob"])
+        parser.add_argument('--embedding_nn_epochs', default=params["embedding_nn_epochs"])
+        parser.add_argument('--embedding_nn_loss', default=params["embedding_nn_loss"])
+        parser.add_argument('--norm', default=None)
+    elif params["link_prediction_type"] == "norm_linear_regression":
+        parser.add_argument('--false_per_true_edges', default=params["false_per_true_edges"])
+        parser.add_argument('--score_maximize', default="balanced_accuracy")
+        parser.add_argument('--regression_solver', default=params["regression_solver"])
+        parser.add_argument('--norm', default=params['norm_type'])  # cosine / L2 Norm / L1 Norm
+    elif params["link_prediction_type"] == "norm_argmin":
+        parser.add_argument('--norm', default=params['norm_type'])  # cosine / L2 Norm / L1 Norm
+
     # embedding_dimension = params[3].astype(int)
     args = parser.parse_args()
     params["graph_percentage"] = args.graph_percentage
-    if args.link_prediction_type == "embedding_neural_network":
-        params["score_maximize"] = "auc"
-        params["optimizer"] = "adam"
-        params["lr"] = 0.001
-        params["epochs"] = 5
-        params["loss"] = "binary_cross_entropy"
-        params.pop("norm_type")
-        params["false_per_true_edges"] = args.false_per_true_edges
-    elif args.link_prediction_type == "norm_linear_regression":
-        params["score_maximize"] = "balanced_accuracy"
-        params["false_per_true_edges"] = args.false_per_true_edges
+
     return args, weights, params
 
 
-def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True, classif=None):  # split False or True
+def obj_func_grid(params, file=None, specific_split=True, split=None, draw=False, classif=None,
+                  is_nni=True):  # split False or True
     """
     Main Function for link prediction task.
     :return:
@@ -1056,8 +1064,12 @@ def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True,
     elif args.embedding == 'Event2Vec':
         dict_embeddings = embeddings_maker.create_event2vec_embeddings()
     elif args.embedding == 'OGRE':
-        # initial_nodes = edges_preparation.ogre_initial_nodes(graph)
-        initial_nodes = edges_preparation.graph_without_unseen_classes(graph)
+        if args.ogre_initial_graph == "label_edges":
+            initial_nodes = edges_preparation.ogre_initial_nodes(graph)
+        elif args.ogre_initial_graph == "instance_nodes":
+            initial_nodes = edges_preparation.graph_without_unseen_classes(graph)
+        else:
+            raise ValueError("Wrong initial graph key")
         dict_embeddings = embeddings_maker.create_ogre_embeddings(user_initial_nodes_choice=initial_nodes)
     else:
         raise ValueError(f"Wrong name of embedding, {args.embedding}")
@@ -1076,9 +1088,11 @@ def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True,
         dict_class_movie_test, classif = classifier.ml_train(dict_train_false)
         from graph_ZSL_new import MLClassifier
         classifier1 = MLClassifier(dict_train_true, dict_train_false, dict_test_true, dict_unseen_edges,
-                                  dict_embeddings, args.embedding, args, linear_classifier=False)
+                                   dict_embeddings, args.embedding, args, linear_classifier=False)
         # classif, dict_class_movie_test = classifier1.train()
     all_measures = None
+    local_max_harmonic_mean = 0
+    best_advantage = None
     for advantage in args.seen_weight_advantage:
         # dict_class_measures_node2vec, pred, pred_true = classifier1.evaluate(classif, dict_class_movie_test)
         dict_class_measures_node2vec, pred, pred_true, hist_real_unseen_pred = classifier.evaluate_for_hist(
@@ -1095,8 +1109,17 @@ def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True,
             all_measures = {key: [measures[key]] for key in list(measures.keys())}
         else:
             [all_measures[key].append(measures[key]) for key in list(measures.keys())]
-        classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix, unseen_conf_matrix)
-    return all_measures
+        if draw:
+            classifier.plot_confusion_matrix_all_classes(conf_matrix, binary_conf_matrix, unseen_conf_matrix)
+
+        current_harmonic_mean = measures["harmonic_mean"]
+        if is_nni:
+            nni.report_intermediate_result(current_harmonic_mean)
+        local_max_harmonic_mean, change = replace_max(local_max_harmonic_mean, current_harmonic_mean,
+                                                      report_change=True)
+        if change:
+            best_advantage = advantage
+    return all_measures, local_max_harmonic_mean, best_advantage
 
 
 def flatten_dict(d):
@@ -1116,7 +1139,7 @@ def config_to_str(config):
     return [str(config.get(k, "--")) for k in HEADER]
 
 
-def run_grid(grid_params, res_dir, now, all_measures=None, ignore_params: list = None, add_to_exist_file=False):
+def run_grid(grid_params, res_dir, now, all_measures=None, ignore_params: list = None, add_to_exist_file=False, is_nni=True):
     grid_params = grid_params if type(grid_params) is dict else json.load(open(grid_params, "rt"))
     res_filename = os.path.join(res_dir, f"{grid_params['dataset'][0]}_grid_{now}.csv")
     if add_to_exist_file:
@@ -1131,9 +1154,9 @@ def run_grid(grid_params, res_dir, now, all_measures=None, ignore_params: list =
         if ignore_params is not None:
             for p in ignore_params:
                 param[p] = grid_params[p]
-        all_measures = obj_func_grid(param, out)
+        all_measures, max_h_m, best_advantage = obj_func_grid(param, out, is_nni=is_nni)
     out.close()
-    return all_measures
+    return all_measures, max_h_m, best_advantage
 
 
 def update_results(file, table_row, measures):
@@ -1180,66 +1203,100 @@ def main():
                                  parameters["embedding_type"][0])
 
 
+# if __name__ == '__main__':
+#     res_dir = "C:\\Users\\kfirs\\lab\\Zero Shot Learning\\New-Graph-ZSL\\grid_results"
+#     # now = datetime.now().strftime("%d%m%y_%H%M%S")
+#     now = "08_08_21"
+#     # parameters = {
+#     #     "dataset": ['our_imdb'],  # 'awa2', 'our_imdb'
+#     #     "embedding_type": ["Node2Vec"],
+#     #     "embedding_dimension": [32, 64, 128, 256],
+#     #     # "label_edges_weight": [1],
+#     #     # "instance_edges_weight": [1],
+#     #     "label_edges_weight": np.logspace(-2, 3, 6),
+#     #     "instance_edges_weight": np.logspace(-2, 3, 6),
+#     #     "norm_type": ['cosine'],
+#     #     "kg_jacard_similarity_threshold": [0.3, 0.6, 0.9],
+#     #     "seen_percentage": [0.8],
+#     #     # "seen_percentage": np.linspace(0.1, 0.9, 9)
+#     #     "attributes_edges_weight": [100]  # 100 is the best for now
+#     # }
+#     parameters = {
+#         "dataset": ['cub'],  # 'our_imdb', 'awa2', 'cub', 'lad'
+#         "embedding_type": ["Node2Vec"],  # "Node2Vec", "OGRE", "hope"
+#         "embedding_dimension": [128],  # 128
+#         "label_edges_weight": [100],  # 30
+#         "instance_edges_weight": [100],  # 1
+#         # "label_edges_weight": np.logspace(0, 2, 3).astype(int),
+#         # "instance_edges_weight": np.logspace(0, 2, 3).astype(int),
+#         "norm_type": ['cosine'],  # 'cosine', "L2 Norm", "L1 Norm"
+#         "kg_jacard_similarity_threshold": [0.3],
+#         "seen_percentage": [0.8],
+#         # "seen_advantage": np.linspace(0, 1.0, 11),
+#         "seen_advantage": [0.7],
+#         # "seen_percentage": np.linspace(0.1, 0.9, 9)
+#         "attributes_edges_weight": [1],  # 100 is the best for now
+#         # "attributes_edges_weight": np.logspace(0, 2, 3).astype(int),  # 100 is the best for now
+#         "link_prediction_type": ["norm_linear_regression"]  # "norm_argmin", "norm_linear_regression", "embedding_neural_network"
+#     }
+# if "OGRE" in parameters["embedding_type"]:
+#     parameters.update({"ogre_second_neighbor_advantage": [0.01]})  # 0.1
+#     parameters.update({"ogre_initial_graph": ["instance_nodes"]})  # "label_edges", "instance_nodes"
+# if "embedding_neural_network" in parameters["link_prediction_type"] or "norm_linear_regression" in parameters["link_prediction_type"]:
+#     from graph_ZSL_new import obj_func_grid as obj
+#     parameters.update({"regression_solver": "lbfgs"})  # "lbfgs", "liblinear", "saga"
+#     parameters.update({"embedding_nn_lr": 0.001})
+#     parameters.update({"embedding_nn_epochs": 10})
+#     parameters.update({"embedding_nn_optimizer": "adam"})
+#     parameters.update({"embedding_nn_loss": "weighted_binary_cross_entropy"})
+#     parameters.update({"embedding_nn_weight_decay": 0.001})
+#     parameters.update({"embedding_nn_dropout_prob": 0.5})
+#     processes = []
+#     parameters_by_procesess = []
+#     for data in parameters["dataset"]:
+#         # for w_m_c in parameters["label_edges_weight"]:
+#         param_by_parameters = parameters.copy()
+#         param_by_parameters["dataset"] = [data]
+#         # param_by_parameters["label_edges_weight"] = [w_m_c]
+#         parameters_by_procesess.append(param_by_parameters)
+#     for i in range(len(parameters_by_procesess)):
+#         all_measures = run_grid(parameters_by_procesess[i], res_dir, now, ignore_params=["seen_advantage"],
+#                                 add_to_exist_file=True)
+#         # plots_2measures_vs_parameter(all_measures, parameters["seen_advantage"],
+#         #                              relevant_keys=["seen_only_accuracy", "unseen_only_accuracy"],
+#         #                              title=f"{parameters_by_procesess[i]['dataset'][0]} Dataset - Seen Advantage Influence",
+#         #                              x_title="seen advantage", y_title="accuracy",
+#         #                              path=Path(
+#         #                                  f"{parameters_by_procesess[i]['dataset'][0]}/plots/Unseen Advantage Influence.png"))
+#
+#     #     proc = multiprocessing.Process(target=run_grid, args=(parameters_by_procesess[i], res_dir, now, ))
+#     #     processes.append(proc)
+#     #     proc.start()
+#     # for p in processes:
+#     #     p.join()
+
+
 if __name__ == '__main__':
     res_dir = "C:\\Users\\kfirs\\lab\\Zero Shot Learning\\New-Graph-ZSL\\grid_results"
-    # now = datetime.now().strftime("%d%m%y_%H%M%S")
-    now = "30_06_21"
-    # parameters = {
-    #     "dataset": ['our_imdb'],  # 'awa2', 'our_imdb'
-    #     "embedding_type": ["Node2Vec"],
-    #     "embedding_dimension": [32, 64, 128, 256],
-    #     # "label_edges_weight": [1],
-    #     # "instance_edges_weight": [1],
-    #     "label_edges_weight": np.logspace(-2, 3, 6),
-    #     "instance_edges_weight": np.logspace(-2, 3, 6),
-    #     "norm_type": ['cosine'],
-    #     "kg_jacard_similarity_threshold": [0.3, 0.6, 0.9],
-    #     "seen_percentage": [0.8],
-    #     # "seen_percentage": np.linspace(0.1, 0.9, 9)
-    #     "attributes_edges_weight": [100]  # 100 is the best for now
-    # }
-    parameters = {
-        "dataset": ['cub'],  # 'our_imdb', 'awa2', 'cub', 'lad'
-        "embedding_type": ["Node2Vec"],  # "Node2Vec", "OGRE", "hope"
-        "embedding_dimension": [128],  # 128
-        "label_edges_weight": [100],  # 30
-        "instance_edges_weight": [100],  # 1
-        # "label_edges_weight": np.logspace(0, 2, 3).astype(int),
-        # "instance_edges_weight": np.logspace(0, 2, 3).astype(int),
-        "norm_type": ['cosine'],  # 'cosine', "L2 Norm", "L1 Norm"
-        "kg_jacard_similarity_threshold": [0.3],
-        "seen_percentage": [0.8],
-        # "seen_advantage": np.linspace(0, 1.0, 11),
-        "seen_advantage": [0.7],
-        # "seen_percentage": np.linspace(0.1, 0.9, 9)
-        "attributes_edges_weight": [1],  # 100 is the best for now
-        # "attributes_edges_weight": np.logspace(0, 2, 3).astype(int),  # 100 is the best for now
-        "link_prediction_type": ["embedding_neural_network"]  # "norm_argmin", "norm_linear_regression", "embedding_neural_network"
-    }
-    if "OGRE" in parameters["embedding_type"]:
-        parameters.update({"ogre_second_neighbor_advantage": [0.01]})  # 0.1
-    if "embedding_neural_network" in parameters["link_prediction_type"] or "norm_linear_regression" in parameters["link_prediction_type"]:
-        from graph_ZSL_new import obj_func_grid as obj
-    processes = []
-    parameters_by_procesess = []
-    for data in parameters["dataset"]:
-        # for w_m_c in parameters["label_edges_weight"]:
-        param_by_parameters = parameters.copy()
-        param_by_parameters["dataset"] = [data]
-        # param_by_parameters["label_edges_weight"] = [w_m_c]
-        parameters_by_procesess.append(param_by_parameters)
-    for i in range(len(parameters_by_procesess)):
-        all_measures = run_grid(parameters_by_procesess[i], res_dir, now, ignore_params=["seen_advantage"],
-                                add_to_exist_file=True)
-        # plots_2measures_vs_parameter(all_measures, parameters["seen_advantage"],
-        #                              relevant_keys=["seen_only_accuracy", "unseen_only_accuracy"],
-        #                              title=f"{parameters_by_procesess[i]['dataset'][0]} Dataset - Seen Advantage Influence",
-        #                              x_title="seen advantage", y_title="accuracy",
-        #                              path=Path(
-        #                                  f"{parameters_by_procesess[i]['dataset'][0]}/plots/Unseen Advantage Influence.png"))
-
-    #     proc = multiprocessing.Process(target=run_grid, args=(parameters_by_procesess[i], res_dir, now, ))
-    #     processes.append(proc)
-    #     proc.start()
-    # for p in processes:
-    #     p.join()
+    now = "08_08_21"
+    is_nni = False
+    if is_nni:
+        parameters = nni.get_next_parameter()
+    else:
+        parameters = {'dataset': 'lad', 'label_edges_weight': 62.60120906152323,
+                      'instance_edges_weight': 83.72357859423553, 'kg_jacard_similarity_threshold': 0.3,
+                      'seen_percentage': 0.8, 'seen_advantage': 'None', 'attributes_edges_weight': 40.36217323517283,
+                      'embedding_type': {'_name': 'OGRE', 'embedding_dimension': 256,
+                                         'ogre_second_neighbor_advantage': 0.01, 'ogre_initial_graph': 'label_edges'},
+                      'link_prediction_type': {'_name': 'embedding_neural_network', 'false_per_true_edges': 5,
+                                               'embedding_nn_lr': 0.001, 'embedding_nn_epochs': 10,
+                                               "embedding_nn_optimizer": "adam",
+                                               "embedding_nn_loss": "weighted_binary_cross_entropy",
+                                               "embedding_nn_weight_decay": 0.001,
+                                               "embedding_nn_dropout_prob":0.4}}
+    parameters = nested_nni_to_dict(parameters)
+    parameters["seen_advantage"] = np.linspace(0.2, 0.9, 8)
+    all_measures, max_harmonic_mean, best_advantage = run_grid(parameters, res_dir, now,
+                                                               ignore_params=["seen_advantage"],
+                                                               add_to_exist_file=True, is_nni=is_nni)
+    nni.report_final_result({'default': max_harmonic_mean, 'best_advantage': best_advantage})

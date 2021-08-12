@@ -36,6 +36,32 @@ def grid(dict_params, ignore_params=None):
     return list(grid_combinations)
 
 
+def nested_nni_to_dict(nni_dict):
+    params_dict = {}
+    for key, val in list(nni_dict.items()):
+        if isinstance(val, dict):
+            val = {k: [val[k]] for k in list(val.keys())}
+            params_dict = {**params_dict, **val}
+            params_dict.pop("_name")
+            params_dict.update({key: val["_name"]})
+        else:
+            params_dict.update({key: [val]})
+    return params_dict
+
+
+def replace_max(old_max, val, report_change=False):
+    change = False
+    if old_max < val:
+        change = True
+        if report_change:
+            return val, change
+        return val
+    else:
+        if report_change:
+            return old_max, change
+        return old_max
+
+
 def plots_2measures_vs_parameter(dict_measures, x_axis, relevant_keys, title, x_title, y_title, path):
     mpl.rcParams['xtick.labelsize'] = 14
     mpl.rcParams['ytick.labelsize'] = 16

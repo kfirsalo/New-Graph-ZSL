@@ -1,0 +1,23 @@
+authorName: kfir
+experimentName: graph_ZSL_generic_nni
+trialConcurrency: 2
+maxExecDuration: 14d
+maxTrialNum: 10000
+trainingServicePlatform: local
+# The path to Search Space
+searchSpacePath: graph_ZSL_generic_search_space.json
+useAnnotation: false
+tuner:
+  builtinTunerName: Anneal
+  classArgs:
+    optimize_mode: maximize
+# The path and the running command of trial
+# gpuIndices: 0,1,2,3
+
+trial:
+  command: python graph_ZSL_generic.py
+  codeDir: .
+  gpuNum: 0
+localConfig:
+  maxTrialNumPerGpu: 0
+  useActiveGpu: false

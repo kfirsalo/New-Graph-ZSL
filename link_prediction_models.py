@@ -9,7 +9,7 @@ from tensorflow.keras.layers import Conv2D, Flatten, Dense, Activation
 import torch
 from torch.backends import cudnn
 import keras
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import accuracy_score
@@ -161,7 +161,7 @@ class TrainLinkPrediction:
     def train(self):
         running_loss = 0.0
         accuracy = []
-        best_val_accuracy = -1.0
+        best_val_auc = -1.0
         best_epoch = 0
         self.model.train()
         for epoch in range(self.epochs):
@@ -183,18 +183,18 @@ class TrainLinkPrediction:
                 samples_weight = row_labels * 10 + 1 - row_labels
                 accuracy.append(accuracy_score(row_labels, final_preds.cpu(), sample_weight=samples_weight))
             _, _, val_accuracy, val_auc = self.eval()
-            best_val_accuracy, change = replace_max(best_val_accuracy, val_accuracy, report_change=True)
+            best_val_accuracy, change = replace_max(best_val_auc, val_auc, report_change=True)
             if change:
                 best_epoch = epoch
                 best_classif = deepcopy(self.model)
             if self.to_nni:
-                nni.report_intermediate_result(val_accuracy)
+                nni.report_intermediate_result(val_auc)
             else:
                 print('num_epochs:{} || loss: {} || train accuracy: {} || val accuracy: {} || val auc: {}'
                       .format(epoch, running_loss / len(self.train_loader), np.mean(accuracy[-9:]), val_accuracy, val_auc))
                 running_loss = 0.0
         if self.to_nni:
-            nni.report_final_result({'default': best_val_accuracy, 'best_num_epochs': best_epoch})
+            nni.report_final_result({'default': best_val_auc, 'best_num_epochs': best_epoch})
         return best_classif
 
     def eval(self):
@@ -235,3 +235,27 @@ class TrainLinkPrediction:
                     final_probs = probs
                     concat = True
         return final_probs
+
+
+if __name__ == "__main__":
+    from pathlib import Path
+    from utils import get_device
+    device = get_device()
+    params = nni.get_next_parameter()
+    x_path = Path("save_data_graph/lad/final_graph_embeddings.npy")
+    y_path = Path("save_data_graph/lad/final_graph_labels.npy")
+    x_train_all, y_train_all = np.load(x_path, allow_pickle=True), np.load(y_path, allow_pickle=True)
+    dataset = EmbeddingLinkPredictionDataset(x_train_all, y_train_all)
+    train_set, val_set = torch.utils.data.random_split(dataset, [int(0.8 * len(dataset)),
+                                                                 len(dataset) - int(0.8 * len(dataset))])
+    train_loader = DataLoader(train_set, batch_size=32, shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=32, shuffle=False)
+    net = EmbeddingLinkPredictionNetwork(len(x_train_all[0]), int(params["hidden_layer_size"]),
+                                         lr=params["embedding_nn_lr"],
+                                         weight_decay=params["embedding_nn_weight_decay"],
+                                         dropout_prob=params["embedding_nn_dropout_prob"],
+                                         optimizer="adam",
+                                         loss="weighted_binary_cross_entropy", device=device)
+    train_lp = TrainLinkPrediction(net, epochs=params["embedding_nn_epochs"],
+                                   train_loader=train_loader, val_loader=val_loader)
+    classif2 = train_lp.train()

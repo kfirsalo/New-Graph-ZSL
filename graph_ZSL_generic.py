@@ -671,6 +671,10 @@ class Classifier:
                 EmbeddingLinkPredictionNetwork, TrainLinkPrediction
             # classif2 = create_keras_model(len(x_train_all[0]), int(self.args.embedding_dimension / 2))
             # classif2 = keras_model_fit(classif2, x_train_all, y_train_all)
+            x_path = Path("save_data_graph/lad/final_graph_embeddings.npy")
+            y_path = Path("save_data_graph/lad/final_graph_labels.npy")
+            np.save(x_path, x_train_all)
+            np.save(y_path, y_train_all)
             dataset = EmbeddingLinkPredictionDataset(x_train_all, y_train_all)
             train_set, val_set = torch.utils.data.random_split(dataset, [int(0.8 * len(dataset)),
                                                                          len(dataset) - int(0.8 * len(dataset))])
@@ -681,7 +685,8 @@ class Classifier:
                                                  weight_decay=self.args.embedding_nn_weight_decay,
                                                  dropout_prob=self.args.embedding_nn_dropout_prob,
                                                  optimizer=self.args.embedding_nn_optimizer,
-                                                 loss=self.args.embedding_nn_loss)
+                                                 loss=self.args.embedding_nn_loss,
+                                                 pos_weight=self.args.false_per_true_edges)
             train_lp = TrainLinkPrediction(net, epochs=self.args.embedding_nn_epochs,
                                            train_loader=train_loader, val_loader=val_loader)
             classif2 = train_lp.train()
@@ -1283,11 +1288,10 @@ if __name__ == '__main__':
     if is_nni:
         parameters = nni.get_next_parameter()
     else:
-        parameters = {'dataset': 'lad', 'label_edges_weight': 62.60120906152323,
-                      'instance_edges_weight': 83.72357859423553, 'kg_jacard_similarity_threshold': 0.3,
+        parameters = {'dataset': 'lad', 'label_edges_weight': 30,
+                      'instance_edges_weight': 1, 'kg_jacard_similarity_threshold': 0.3,
                       'seen_percentage': 0.8, 'seen_advantage': 'None', 'attributes_edges_weight': 40.36217323517283,
-                      'embedding_type': {'_name': 'OGRE', 'embedding_dimension': 256,
-                                         'ogre_second_neighbor_advantage': 0.01, 'ogre_initial_graph': 'label_edges'},
+                      'embedding_type': {'_name': 'Node2Vec', 'embedding_dimension': 128},
                       'link_prediction_type': {'_name': 'embedding_neural_network', 'false_per_true_edges': 5,
                                                'embedding_nn_lr': 0.001, 'embedding_nn_epochs': 10,
                                                "embedding_nn_optimizer": "adam",

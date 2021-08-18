@@ -15,6 +15,8 @@ import torch.optim as optim
 from sklearn.metrics import accuracy_score
 import nni
 from copy import deepcopy
+from pathlib import Path
+from utils import get_device
 
 from utlis_graph_zsl import replace_max
 
@@ -238,8 +240,6 @@ class TrainLinkPrediction:
 
 
 if __name__ == "__main__":
-    from pathlib import Path
-    from utils import get_device
     device = get_device()
     params = nni.get_next_parameter()
     x_path = Path("save_data_graph/lad/final_graph_embeddings.npy")

@@ -1,5 +1,5 @@
 {
-  "hidden_layer_size":{"_type":"choice","_value":[8, 16, 32, 64]},
+  "hidden_layer_size":{"_type":"choice","_value":[7, 16, 32, 64]},
   "embedding_nn_lr":{"_type":"uniform","_value":[0.000001,0.1]},
   "embedding_nn_dropout_prob":{"_type":"uniform","_value":[0, 0.7]},
   "embedding_nn_epochs":{"_type":"choice","_value":[10]},

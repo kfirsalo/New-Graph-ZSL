@@ -185,7 +185,7 @@ class TrainLinkPrediction:
                 samples_weight = row_labels * 10 + 1 - row_labels
                 accuracy.append(accuracy_score(row_labels, final_preds.cpu(), sample_weight=samples_weight))
             _, _, val_accuracy, val_auc = self.eval()
-            best_val_accuracy, change = replace_max(best_val_auc, val_auc, report_change=True)
+            best_val_auc, change = replace_max(best_val_auc, val_auc, report_change=True)
             if change:
                 best_epoch = epoch
                 best_classif = deepcopy(self.model)
@@ -216,7 +216,7 @@ class TrainLinkPrediction:
                     all_labels = labels
                     concat = True
             all_row_labels = all_labels[:, 0].cpu()
-            fpr, tpr, thresholds = metrics.roc_curve(all_row_labels, final_predictions[:, 0], pos_label=1)
+            fpr, tpr, thresholds = metrics.roc_curve(all_row_labels, final_predictions[:, 0].cpu(), pos_label=1)
             auc = metrics.auc(fpr, tpr)
             samples_weight = all_row_labels * 10 + 1 - all_row_labels
             final_predictions = 1 - torch.argmax(final_predictions, dim=1)
@@ -257,5 +257,5 @@ if __name__ == "__main__":
                                          optimizer="adam",
                                          loss="weighted_binary_cross_entropy", device=device)
     train_lp = TrainLinkPrediction(net, epochs=params["embedding_nn_epochs"],
-                                   train_loader=train_loader, val_loader=val_loader)
+                                   train_loader=train_loader, val_loader=val_loader, to_nni=True)
     classif2 = train_lp.train()

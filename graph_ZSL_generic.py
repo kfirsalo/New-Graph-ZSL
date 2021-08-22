@@ -1144,7 +1144,8 @@ def config_to_str(config):
     return [str(config.get(k, "--")) for k in HEADER]
 
 
-def run_grid(grid_params, res_dir, now, all_measures=None, ignore_params: list = None, add_to_exist_file=False, is_nni=True):
+def run_grid(grid_params, res_dir, now, all_measures=None, ignore_params: list = None, add_to_exist_file=False,
+             is_nni=True):
     grid_params = grid_params if type(grid_params) is dict else json.load(open(grid_params, "rt"))
     res_filename = os.path.join(res_dir, f"{grid_params['dataset'][0]}_grid_{now}.csv")
     if add_to_exist_file:
@@ -1288,16 +1289,15 @@ if __name__ == '__main__':
     if is_nni:
         parameters = nni.get_next_parameter()
     else:
-        parameters = {'dataset': 'lad', 'label_edges_weight': 30,
-                      'instance_edges_weight': 1, 'kg_jacard_similarity_threshold': 0.3,
-                      'seen_percentage': 0.8, 'seen_advantage': 'None', 'attributes_edges_weight': 40.36217323517283,
-                      'embedding_type': {'_name': 'Node2Vec', 'embedding_dimension': 128},
-                      'link_prediction_type': {'_name': 'embedding_neural_network', 'false_per_true_edges': 5,
-                                               'embedding_nn_lr': 0.001, 'embedding_nn_epochs': 10,
-                                               "embedding_nn_optimizer": "adam",
-                                               "embedding_nn_loss": "weighted_binary_cross_entropy",
-                                               "embedding_nn_weight_decay": 0.001,
-                                               "embedding_nn_dropout_prob":0.4}}
+        parameters = {'dataset': 'lad', 'label_edges_weight': 30.65383,
+                      'instance_edges_weight': 27.37175, 'kg_jacard_similarity_threshold': 0.3,
+                      'seen_percentage': 0.8, 'seen_advantage': 'None', 'attributes_edges_weight': 92.95568,
+                      'embedding_type': {'_name': 'OGRE', 'embedding_dimension': 32,
+                                         "ogre_second_neighbor_advantage": 0,
+                                         "ogre_initial_graph": "label_edges"},
+                      'link_prediction_type': {'_name': 'norm_linear_regression', "norm_type": "L2 Norm",
+                                               "false_per_true_edges": 13,
+                                               "regression_solver": "liblinear"}}
     parameters = nested_nni_to_dict(parameters)
     parameters["seen_advantage"] = np.linspace(0.2, 0.9, 8)
     all_measures, max_harmonic_mean, best_advantage = run_grid(parameters, res_dir, now,

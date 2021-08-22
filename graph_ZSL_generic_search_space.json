@@ -1,5 +1,5 @@
 {
-  "dataset": {"_type":"choice", "_value": ["lad"]},
+  "dataset": {"_type":"choice", "_value": ["cub"]},
   "label_edges_weight":{"_type":"uniform","_value":[1e-1, 100]},
   "instance_edges_weight":{"_type":"uniform","_value":[1e-1, 100]},
   "kg_jacard_similarity_threshold":{"_type":"choice","_value":[3e-1]},

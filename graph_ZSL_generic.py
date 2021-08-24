@@ -1032,7 +1032,7 @@ def define_args(params):
     return args, weights, params
 
 
-def obj_func_grid(params, file=None, specific_split=True, split=None, draw=False, classif=None,
+def obj_func_grid(params, file=None, specific_split=True, split=None, draw=True, classif=None,
                   is_nni=True):  # split False or True
     """
     Main Function for link prediction task.
@@ -1289,15 +1289,11 @@ if __name__ == '__main__':
     if is_nni:
         parameters = nni.get_next_parameter()
     else:
-        parameters = {'dataset': 'lad', 'label_edges_weight': 30.65383,
-                      'instance_edges_weight': 27.37175, 'kg_jacard_similarity_threshold': 0.3,
-                      'seen_percentage': 0.8, 'seen_advantage': 'None', 'attributes_edges_weight': 92.95568,
-                      'embedding_type': {'_name': 'OGRE', 'embedding_dimension': 32,
-                                         "ogre_second_neighbor_advantage": 0,
-                                         "ogre_initial_graph": "label_edges"},
-                      'link_prediction_type': {'_name': 'norm_linear_regression', "norm_type": "L2 Norm",
-                                               "false_per_true_edges": 13,
-                                               "regression_solver": "liblinear"}}
+        parameters = {'dataset': 'cub', 'label_edges_weight': 100,
+                      'instance_edges_weight': 1, 'kg_jacard_similarity_threshold': 0.3,
+                      'seen_percentage': 0.8, 'seen_advantage': 'None', 'attributes_edges_weight': 10,
+                      'embedding_type': {'_name': 'Node2Vec', 'embedding_dimension': 128},
+                      'link_prediction_type': {'_name': 'norm_argmin', "norm_type": "cosine"}}
     parameters = nested_nni_to_dict(parameters)
     parameters["seen_advantage"] = np.linspace(0.2, 0.9, 8)
     all_measures, max_harmonic_mean, best_advantage = run_grid(parameters, res_dir, now,

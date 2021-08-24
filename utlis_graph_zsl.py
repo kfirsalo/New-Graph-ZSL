@@ -186,7 +186,7 @@ def classes_split(dataset, data_dir, split_dir, return_translation=False):
         classes_translation = None
     elif dataset == "cub":
         train_test_split = sio.loadmat(split_dir)
-        classes = get_classes(images_dir)
+        classes = np.array(sorted(get_classes(images_dir)))
         seen_classes = classes[train_test_split['train_cid'] - 1][0]
         unseen_classes = classes[train_test_split['test_cid'] - 1][0]
         classes_translation = {c[:3]: c for c in classes}

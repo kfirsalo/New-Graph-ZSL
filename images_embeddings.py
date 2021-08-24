@@ -165,6 +165,11 @@ def define_path(dataset_name):
         data_path = "ZSL _DataSets/lad"
         split_path = "ZSL _DataSets/lad/split_zsl.txt"
         chkpt_path = 'save_models/lad'
+    elif dataset_name == "awa2":
+        data_path = "ZSL _DataSets/awa2/Animals_with_Attributes2"
+        split_path = {"unseen": 'ZSL _DataSets/awa2/Animals_with_Attributes2/testclasses.txt',
+                                            "seen": "ZSL _DataSets/awa2/Animals_with_Attributes2/trainclasses.txt"}
+        chkpt_path = 'save_models/awa2'
     else:
         raise ValueError("Wrong dataset name: replace with cub/lad")
     return data_path, split_path, chkpt_path
@@ -174,7 +179,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ResNet50 for Images Embedding")
     parser.add_argument('--nni', dest="nni", action='store_true',
                         help=' Whether to use nni')
-    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="cub")
+    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="awa2")
     args = parser.parse_args()
 
     data_dir, split_dir, chkpt_dir = define_path(args.dataset)

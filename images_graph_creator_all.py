@@ -219,7 +219,7 @@ class FinalGraphCreator:
                 len_neigh = len(neighbors)
                 count += len_neigh
                 mean = count / (i + 1)
-                if i % 1000 == 0:
+                if i % 100 == 0:
                     # try to make avg. mean between 10 to 20
                     print('Progress:', i, '/', len(self.embeddings), ';  Current Mean:', mean)  # 37273
                 weight_edges = list(zip(np.repeat(i, len(neighbors)).astype(str), neighbors.astype(str), edges_weights))
@@ -478,7 +478,7 @@ def define_graph_args(dataset_name):
         _model_path = "save_models/awa2"
         _attributes_path = "ZSL _DataSets/awa2/Animals_with_Attributes2/predicate-matrix-binary.txt"
         _pre_knowledge_graph_path = "materials/imagenet-induced-graph.json"
-        _radius = {"images_radius": 0.10, "classes_radius": 1.15}
+        _radius = {"images_radius": 0.015, "classes_radius": 1.15}
     elif dataset_name == "cub":
         _data_path = "ZSL _DataSets/cub/CUB_200_2011"
         _split_path = "ZSL _DataSets/cub/CUB_200_2011/train_test_split_easy.mat"
@@ -505,7 +505,7 @@ def define_graph_args(dataset_name):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="lad")
+    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="awa2")
     parser.add_argument('--cnn', default='materials/resnet50-base.pth')
     # parser.add_argument('--cnn', default='save_awa2/resnet-fit/epoch-1.pth')
     # parser.add_argument('--pred', default='save_awa2/gcn-dense-att/epoch-30.pred')

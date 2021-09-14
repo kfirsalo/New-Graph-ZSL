@@ -65,4 +65,7 @@ class ResNet50(nn.Module):
     def load_best(self):
         print('... loading best checkpoint ...')
         checkpoint_file = self.checkpoint_file + '_best'
-        self.load_state_dict(torch.load(checkpoint_file))
+        if self.device == torch.device("cpu"):
+            self.load_state_dict(torch.load(checkpoint_file, map_location="cpu"))
+        else:
+            self.load_state_dict(torch.load(checkpoint_file))

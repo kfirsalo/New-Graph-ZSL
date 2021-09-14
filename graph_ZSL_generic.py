@@ -1289,7 +1289,7 @@ if __name__ == '__main__':
     if is_nni:
         parameters = nni.get_next_parameter()
     else:
-        parameters = {'dataset': 'lad', 'label_edges_weight': 49,
+        parameters = {'dataset': 'awa2', 'label_edges_weight': 49,
                       'instance_edges_weight': 97.413, 'kg_jacard_similarity_threshold': 0.3,
                       'seen_percentage': 0.8, 'seen_advantage': 'None', 'attributes_edges_weight': 19.36,
                       'embedding_type': {'_name': 'Node2Vec', 'embedding_dimension': 64},

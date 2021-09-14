@@ -949,7 +949,7 @@ class Classifier:
         save_path = f'{self.args.dataset}/plots/confusion_matrix_{self.embedding}_{self.args.link_prediction_type}_{self.args.norm}'
         title = None
         conf_matrix = normalize(conf_matrix)
-        plot_confusion_matrix(conf_matrix, title, x_title, y_title, save_path, vmax=None, vmin=None)
+        plot_confusion_matrix(conf_matrix, title, x_title, y_title, save_path, vmax=None, vmin=None, pdf=True)
         if binary_conf_matrix is not None:
             y_binary = "True Seen/Unseen"
             x_binary = "Predicted Seen/Unseen"
@@ -957,7 +957,7 @@ class Classifier:
             binary_title = None
             save_path_binary = f'{self.args.dataset}/plots/binary_confusion_matrix_{self.embedding}_{self.args.link_prediction_type}_{self.args.norm}'
             plot_confusion_matrix(binary_conf_matrix, binary_title, x_binary, y_binary, save_path_binary, vmax=None,
-                                  vmin=None, cmap=None)
+                                  vmin=None, cmap=None, pdf=True)
         if unseen_conf_matrix is not None:
             y_unseen = "True Seen/Unseen"
             x_unseen = "Predicted Seen/Unseen"
@@ -965,7 +965,7 @@ class Classifier:
             unseen_title = None
             save_path_unseen = f'{self.args.dataset}/plots/unseen_confusion_matrix_{self.embedding}_{self.args.link_prediction_type}_{self.args.norm}'
             plot_confusion_matrix(unseen_conf_matrix, unseen_title, x_unseen, y_unseen, save_path_unseen, vmax=None,
-                                  vmin=None)
+                                  vmin=None, pdf=True)
 
 
 from dataclasses import dataclass
@@ -1289,13 +1289,20 @@ if __name__ == '__main__':
     if is_nni:
         parameters = nni.get_next_parameter()
     else:
-        parameters = {'dataset': 'cub', 'label_edges_weight': 100,
-                      'instance_edges_weight': 1, 'kg_jacard_similarity_threshold': 0.3,
-                      'seen_percentage': 0.8, 'seen_advantage': 'None', 'attributes_edges_weight': 10,
-                      'embedding_type': {'_name': 'Node2Vec', 'embedding_dimension': 128},
-                      'link_prediction_type': {'_name': 'norm_argmin', "norm_type": "cosine"}}
+        parameters = {'dataset': 'lad', 'label_edges_weight': 49,
+                      'instance_edges_weight': 97.413, 'kg_jacard_similarity_threshold': 0.3,
+                      'seen_percentage': 0.8, 'seen_advantage': 'None', 'attributes_edges_weight': 19.36,
+                      'embedding_type': {'_name': 'Node2Vec', 'embedding_dimension': 64},
+                      'link_prediction_type': {'_name': 'norm_argmin', "norm_type": "L2 Norm"}}
+        # parameters = {'dataset': 'lad', 'label_edges_weight': 86.83,
+        #               'instance_edges_weight': 65.26, 'kg_jacard_similarity_threshold': 0.3,
+        #               'seen_percentage': 0.8, 'seen_advantage': 'None', 'attributes_edges_weight': 31.49,
+        #               'embedding_type': {'_name': 'OGRE', 'embedding_dimension': 32,
+        #                                  "ogre_second_neighbor_advantage": 0.01, "ogre_initial_graph": "instance_nodes"},
+        #               'link_prediction_type': {'_name': 'norm_argmin', "norm_type": "L2 Norm"}}
     parameters = nested_nni_to_dict(parameters)
-    parameters["seen_advantage"] = np.linspace(0.2, 0.9, 8)
+    parameters["seen_advantage"] = [0.6]
+    # parameters["seen_advantage"] = np.linspace(0.2, 0.9, 8)
     all_measures, max_harmonic_mean, best_advantage = run_grid(parameters, res_dir, now,
                                                                ignore_params=["seen_advantage"],
                                                                add_to_exist_file=True, is_nni=is_nni)

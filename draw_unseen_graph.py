@@ -115,12 +115,12 @@ class DrawUnseenGraph:
                                                     f"_dim={self.args.embedding_dimension}_label_weight="
                                                     f"{self.args.label_edges_weight}_instance_weight="
                                                     f"{self.args.instance_edges_weight}_ogre_second_neighbor_advantage="
-                                                    f"{self.args.ogre_second_neighbor_advantage}.png")
+                                                    f"{self.args.ogre_second_neighbor_advantage}.pdf")
         else:
             visualization_path = base_path.joinpath(f"unseen_graph_{self.kind}_visualization_type={self.args.embedding}"
                                                     f"_dim={self.args.embedding_dimension}_label_weight="
                                                     f"{self.args.label_edges_weight}_instance_weight="
-                                                    f"{self.args.instance_edges_weight}.png")
+                                                    f"{self.args.instance_edges_weight}.pdf")
         # visualization_path = Path(
         #     f"{self.dataset}/unseen_plots/{self.args.embedding}/unseen_graph_{self.kind}_visualization_"
         #     f"type={self.args.embedding}_dim={self.args.embedding_dimension}_label_weight={self.args.label_edges_weight}_"

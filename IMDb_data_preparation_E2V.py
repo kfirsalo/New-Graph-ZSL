@@ -279,7 +279,7 @@ class MoviesGraph(DataCsvToGraph):
         union_cardinality = len(set(x).union(set(y)))
         return intersection_cardinality / float(union_cardinality)
 
-    def create_knowledge_graph(self, final_labels_data, threshold):
+    def create_knowledge_graph(self, final_labels_data, threshold, att_weight=1):
         """
         create the knowledge graph from the classes.
         we use jaccard similarity score for every 2 nodes based on their array_label.

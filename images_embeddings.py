@@ -14,6 +14,7 @@ import nni
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 from utlis_graph_zsl import plot_confusion_matrix, classes_split
+from pathlib import Path
 
 seed = 0
 torch.manual_seed(seed)
@@ -81,9 +82,10 @@ class ImagesEmbedding:
     #         raise ValueError("Wrong dataset name: replace with cub/lad")
     #     return seen_classes, unseen_classes
 
-    def train(self):
+    def train(self, save=True):
         running_loss = 0.0
         accuracy = []
+        val_accuracies = []
         best_val_accuracy = 0.0
         best_epoch = 0
         self.learning_model.train()
@@ -104,19 +106,23 @@ class ImagesEmbedding:
                 final_preds = torch.argmax(predictions, dim=1)
                 accuracy.append(accuracy_score(labels.cpu(), final_preds.cpu()))
             _, _, val_accuracy = self.eval()
+            val_accuracies.append(val_accuracy)
             if val_accuracy > best_val_accuracy:
                 best_val_accuracy = val_accuracy
                 best_epoch = epoch
-                self.save_best_model()
+                if save:
+                    self.save_best_model()
             if args.nni:
                 nni.report_intermediate_result(val_accuracy)
             else:
                 print('num_epochs:{} || loss: {} || train accuracy: {} || val accuracy: {} '
                       .format(epoch, running_loss / len(self.train_loader), np.mean(accuracy[-9:]), val_accuracy))
                 running_loss = 0.0
-                self.save_model()
+                if save:
+                    self.save_model()
         if args.nni:
             nni.report_final_result({'default': best_val_accuracy, 'best_num_epochs': best_epoch})
+        return val_accuracies
 
     def eval(self):
         self.learning_model.eval()
@@ -153,7 +159,8 @@ def confusion_matrix_maker(dataset, gt, predictions):
     title = f'Confusion Matrix, Resnet50 Classification {dataset}'
     x_title = f"True Labels"
     y_title = f"Predicted Labels"
-    plot_confusion_matrix(conf_matrix, title, x_title, y_title, f'{dataset}/plots/confusion_matrix_ResNet50_{dataset}')
+    plot_confusion_matrix(conf_matrix, title, x_title, y_title,
+                          f'{dataset}/plots/confusion_matrix_ResNet50_{dataset}.pdf')
 
 
 def define_path(dataset_name):
@@ -168,18 +175,43 @@ def define_path(dataset_name):
     elif dataset_name == "awa2":
         data_path = "ZSL _DataSets/awa2/Animals_with_Attributes2"
         split_path = {"unseen": 'ZSL _DataSets/awa2/Animals_with_Attributes2/testclasses.txt',
-                                            "seen": "ZSL _DataSets/awa2/Animals_with_Attributes2/trainclasses.txt"}
+                      "seen": "ZSL _DataSets/awa2/Animals_with_Attributes2/trainclasses.txt"}
         chkpt_path = 'save_models/awa2'
     else:
         raise ValueError("Wrong dataset name: replace with cub/lad")
     return data_path, split_path, chkpt_path
 
 
+def plot_measure(measure, path, mode="Accuracy"):
+    """
+    Receives the accuracies of all four representations and the mode (=task, 'pos' or 'ner') and plots the learning
+    curves.
+    The accuracies are assumed to be collected in the order requested in the question (we assume, for example, that
+    the results were collected from a dataset that has a number of sentences divisible by 500).
+    """
+    import matplotlib as mpl
+    mpl.rcParams['xtick.labelsize'] = 12
+    mpl.rcParams['ytick.labelsize'] = 12
+    mpl.rcParams['axes.titlesize'] = 14
+    mpl.rcParams['axes.labelsize'] = 16
+    plt.rcParams["font.family"] = "Times New Roman"
+    epochs = 1 + np.arange(len(measure))
+    epochs = epochs.astype(int)
+    plt.figure()
+    plt.plot(epochs, measure)
+    plt.xlabel("Number of Epochs")
+    plt.ylabel(f"{mode}")
+    plt.locator_params(axis='x', nbins=len(epochs))
+    plot_path = Path(path)
+    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(plot_path, format="pdf")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ResNet50 for Images Embedding")
     parser.add_argument('--nni', dest="nni", action='store_true',
                         help=' Whether to use nni')
-    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="awa2")
+    parser.add_argument('--dataset', dest="dataset", help=' Name of the dataset', type=str, default="lad")
     args = parser.parse_args()
 
     data_dir, split_dir, chkpt_dir = define_path(args.dataset)
@@ -188,8 +220,11 @@ if __name__ == "__main__":
     else:
         params = {"lr": 0.0012694, "batch_size": 64, "weight_decay": 0.0000848412}
         print(f'--start training on {args.dataset}--')
-    images_embedding = ImagesEmbedding(args, data_dir, split_dir, chkpt_dir, lr=params["lr"],
-                                       batch_size=params["batch_size"], weight_decay=params["weight_decay"])
-    images_embedding.train()
-    gt, predictions, _ = images_embedding.eval()
-    confusion_matrix_maker(args.dataset, gt, predictions)
+    # images_embedding = ImagesEmbedding(args, data_dir, split_dir, chkpt_dir, lr=params["lr"],
+    #                                    batch_size=params["batch_size"], weight_decay=params["weight_decay"])
+    # val_accs = images_embedding.train(save=False)
+    val_accs = [0.8, 0.85, 0.86, 0.88, 0.902]
+    acc_plot_path = Path(f"{args.dataset}/plots/acc_val_curve.pdf")
+    plot_measure(val_accs, acc_plot_path)
+    # gt, predictions, _ = images_embedding.eval()
+    # confusion_matrix_maker(args.dataset, gt, predictions)

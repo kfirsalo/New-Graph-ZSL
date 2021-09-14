@@ -43,7 +43,8 @@ class ImagesEmbeddings:
         self.classes_path = osp.join(self.save_path, 'classes_ordered.npy')
         self.args = _args
         self.device = get_device()
-        self.embeddings_dimension = 2048 if self.args.dataset == "awa2" else 512
+        # self.embeddings_dimension = 2048 if self.args.dataset == "awa2" else 512
+        self.embeddings_dimension = 512
         self.seen_classes, self.unseen_classes = self.get_classes()
         self.classes = [*self.seen_classes, *self.unseen_classes]
         self.cnn = self.cnn_maker()
@@ -53,10 +54,10 @@ class ImagesEmbeddings:
         return seen_classes, unseen_classes
 
     def cnn_maker(self):
-        if self.args.dataset == "awa2":
-            cnn = make_resnet50_base()
-            cnn.load_state_dict(torch.load(self.model_path))
-        elif self.args.dataset == "cub" or self.args.dataset == "lad":
+        # if self.args.dataset == "awa2":
+        #     cnn = make_resnet50_base()
+        #     cnn.load_state_dict(torch.load(self.model_path))
+        if self.args.dataset == "cub" or self.args.dataset == "lad" or self.args.dataset == "awa2":
             cnn = ResNet50(out_dimension=len(self.seen_classes), chkpt_dir=self.model_path, device=self.device)
             cnn.load_best()
         else:
@@ -74,9 +75,9 @@ class ImagesEmbeddings:
             classes.extend(cls)
             data.to(self.device)
             with torch.no_grad():
-                if self.args.dataset == "awa2":
-                    embeds = self.cnn(data)
-                elif self.args.dataset == "cub" or self.args.dataset == "lad":
+                # if self.args.dataset == "awa2":
+                #     embeds = self.cnn(data)
+                if self.args.dataset == "cub" or self.args.dataset == "lad" or self.args.dataset == "awa2":
                     embeds = self.cnn.resnet50(data)
                 else:
                     raise ValueError("Wrong dataset name: replace with awa2/cub/lad")
@@ -473,7 +474,8 @@ def define_graph_args(dataset_name):
         _split_path = {"unseen": 'ZSL _DataSets/awa2/Animals_with_Attributes2/testclasses.txt',
                        "seen": "ZSL _DataSets/awa2/Animals_with_Attributes2/trainclasses.txt"}
         _chkpt_path = "save_data_graph/awa2"
-        _model_path = "materials/resnet50-base.pth"
+        # _model_path = "materials/resnet50-base.pth"
+        _model_path = "save_models/awa2"
         _attributes_path = "ZSL _DataSets/awa2/Animals_with_Attributes2/predicate-matrix-binary.txt"
         _pre_knowledge_graph_path = "materials/imagenet-induced-graph.json"
         _radius = {"images_radius": 0.10, "classes_radius": 1.15}
